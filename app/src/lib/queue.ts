@@ -364,6 +364,62 @@ export function buildQueue(input: QueueInput): TodayQueue {
   };
 }
 
+/** How many cards one "Overhoor dit hoofdstuk / vak" round holds. */
+export const STUDY_ROUND = 20;
+
+export interface StudyScope {
+  kind: 'hoofdstuk' | 'vak';
+  id: string;
+}
+
+/**
+ * A round of cards from one chapter or one course, at any moment (his wish,
+ * 26/10: on days with more time he works through a chapter with the boxes, not
+ * only through today's list). First the cards whose day has come (lowest box
+ * first), then new cards in chapter order, then cards whose day has not come
+ * yet, lowest box first: reviewing early still moves a card one box, exactly
+ * like pulling a box out of a real Leitner system. Cards answered today are
+ * left out, so "Nog een ronde" carries on where the last round stopped.
+ */
+export function studyRound(
+  input: QueueInput,
+  scope: StudyScope,
+  size: number = STUDY_ROUND,
+): { items: QueueItem[]; left: number } {
+  const done = answeredToday(input.reviews, input.today);
+  const live = input.cards.filter(
+    (c) => c.status === 'live' && !done.has(c.id) && (scope.kind === 'hoofdstuk' ? c.chapter_id === scope.id : c.course_id === scope.id),
+  );
+  const states = foldAll(live.map((c) => c.id), input.reviews, { waits: input.defaults.wait_days });
+  const chapterSort = new Map(input.chapters.map((c) => [c.id, c.sort]));
+  const due: Ranked[] = [];
+  const fresh: Ranked[] = [];
+  const early: Ranked[] = [];
+  for (const card of live) {
+    const state = states.get(card.id)!;
+    if (state.box === 0) fresh.push({ card, state, rank: 0 });
+    else if (state.due !== null && state.due <= input.today) due.push({ card, state, rank: 0 });
+    else early.push({ card, state, rank: 0 });
+  }
+  sortDue(due);
+  fresh.sort(
+    (a, b) =>
+      (chapterSort.get(a.card.chapter_id) ?? 0) - (chapterSort.get(b.card.chapter_id) ?? 0) ||
+      instant(a.card.created_at) - instant(b.card.created_at) ||
+      a.card.sort - b.card.sort ||
+      a.card.id.localeCompare(b.card.id),
+  );
+  early.sort(
+    (a, b) => a.state.box - b.state.box || (a.state.due ?? '').localeCompare(b.state.due ?? '') || a.card.id.localeCompare(b.card.id),
+  );
+  const all: QueueItem[] = [
+    ...due.map((r) => ({ card: r.card, state: r.state, kind: 'review' as const, done: false })),
+    ...fresh.map((r) => ({ card: r.card, state: r.state, kind: 'new' as const, done: false })),
+    ...early.map((r) => ({ card: r.card, state: r.state, kind: 'review' as const, done: false })),
+  ];
+  return { items: all.slice(0, size), left: Math.max(0, all.length - size) };
+}
+
 /** Today's list limited to one course ("Verder studeren" on a course page). */
 export function forCourse(queue: TodayQueue, courseId: string): QueueItem[] {
   return queue.remaining.filter((i) => i.card.course_id === courseId);

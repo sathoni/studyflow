@@ -31,6 +31,8 @@ import {
   extraRound,
   forCourse,
   minutesLabel,
+  studyRound,
+  type StudyScope,
   type QueueItem,
   type RepeatItem,
 } from '../lib/queue.ts';
@@ -48,13 +50,21 @@ const UNDO_MS = 6500;
 
 export function sessionMode(env: PageEnv): ModeHandle {
   const { ctx, s, d, params } = env;
-  const courseId = params[0] ?? null;
-  const extra = params[1] === 'extra';
+  // sessie/hoofdstuk/<id>/<round> or sessie/vak/<id>/<round>: a round with the boxes
+  // over one chapter or course, at any moment. sessie/<course>[/extra]: today's list.
+  const study: StudyScope | null =
+    params[0] === 'hoofdstuk' || params[0] === 'vak' ? { kind: params[0], id: params[1] ?? '' } : null;
+  const round = Number(params[2] ?? '1') || 1;
+  const courseId = study ? null : (params[0] ?? null);
+  const extra = !study && params[1] === 'extra';
   const waits = s.defaults.wait_days;
 
   let items: QueueItem[];
   let repeats: RepeatItem[];
-  if (!courseId) {
+  if (study) {
+    items = studyRound(queueInput(s), study).items;
+    repeats = [];
+  } else if (!courseId) {
     items = d.queue.remaining;
     repeats = d.queue.repeats;
   } else if (extra) {
@@ -182,6 +192,7 @@ export function sessionMode(env: PageEnv): ModeHandle {
       visualFrame(card.answer.visual, visEnv),
       h('div', { class: 'rv-meta' }, chip(card.source.label, 'chip-source')),
       more,
+      h('p', { class: 'rv-tap rv-tap-back', text: 'Tik om alleen de vraag te zien' }),
     );
     const tap = h('p', { class: 'rv-tap', text: 'Tik om het antwoord te zien' });
 
@@ -230,7 +241,18 @@ export function sessionMode(env: PageEnv): ModeHandle {
       renderFoot();
     };
 
-    attachGestures(cardEl, reveal);
+    // After the first reveal a tap flips between the question alone and the answer
+    // (his wish, 26/10). The two answer buttons stay available on both sides.
+    const flip = () => {
+      if (!cardEl) return;
+      if (!revealed) return reveal();
+      const toQuestion = !back.hidden;
+      back.hidden = toQuestion;
+      tap.hidden = !toQuestion;
+      cardEl.classList.toggle('revealed', !toQuestion);
+    };
+
+    attachGestures(cardEl, flip);
     fill(body, cardEl, hintBtn);
     body.scrollTop = 0;
     requestAnimationFrame(() => cardEl?.classList.remove('enter'));
@@ -360,7 +382,7 @@ export function sessionMode(env: PageEnv): ModeHandle {
 
   /* ---------------- gestures ---------------- */
 
-  function attachGestures(el: HTMLElement, reveal: () => void): void {
+  function attachGestures(el: HTMLElement, onTap: () => void): void {
     let startX = 0;
     let startY = 0;
     let dx = 0;
@@ -418,7 +440,7 @@ export function sessionMode(env: PageEnv): ModeHandle {
     el.addEventListener('pointercancel', end);
     el.addEventListener('click', (e) => {
       if (swiped || interactive(e.target)) return;
-      if (!revealed) reveal();
+      onTap();
     });
   }
 
@@ -446,21 +468,40 @@ export function sessionMode(env: PageEnv): ModeHandle {
     const failed = sum.failed.map((id) => d.cardById.get(id)).filter((c): c is Card => !!c);
     const nothing = sum.cards === 0 && items.length === 0 && repeats.length === 0;
 
+    // A round over one chapter or course: say what is left there and offer the next round.
+    const next = study ? studyRound({ ...queueInput(s), reviews }, study) : null;
+    const leftInScope = next ? next.items.length + next.left : 0;
+    const scopeName = study
+      ? study.kind === 'hoofdstuk'
+        ? `dit hoofdstuk`
+        : `${d.courses.get(study.id)?.name ?? study.id}`
+      : '';
+
     fill(
       body,
       h(
         'div',
         { class: 'end' },
         h('span', { class: 'end-check', html: icon('checkCircle', 64) }),
-        h('h1', { class: 'end-title', text: nothing ? 'Niets meer te overhoren' : allDone ? 'Klaar voor vandaag' : 'Goed gedaan' }),
-        h('p', {
-          class: 'end-sub',
-          text: nothing
-            ? 'Alles voor vandaag is al gedaan.'
-            : allDone
-              ? 'Alles voor vandaag is gedaan. Tot morgen!'
-              : `Nog ${cardsLabel(after.remaining.length + after.repeats.length)} voor vandaag.`,
-        }),
+        study
+          ? h('h1', { class: 'end-title', text: nothing ? 'Alles overlopen' : leftInScope > 0 ? 'Ronde klaar' : 'Alles overlopen' })
+          : h('h1', { class: 'end-title', text: nothing ? 'Niets meer te overhoren' : allDone ? 'Klaar voor vandaag' : 'Goed gedaan' }),
+        study
+          ? h('p', {
+              class: 'end-sub',
+              text:
+                leftInScope > 0
+                  ? `Nog ${cardsLabel(leftInScope)} in ${scopeName}. Doe gerust nog een ronde.`
+                  : `Je hebt vandaag alle kaartjes van ${scopeName} overlopen.`,
+            })
+          : h('p', {
+              class: 'end-sub',
+              text: nothing
+                ? 'Alles voor vandaag is al gedaan.'
+                : allDone
+                  ? 'Alles voor vandaag is gedaan. Tot morgen!'
+                  : `Nog ${cardsLabel(after.remaining.length + after.repeats.length)} voor vandaag.`,
+            }),
         nothing
           ? null
           : h(
@@ -497,9 +538,16 @@ export function sessionMode(env: PageEnv): ModeHandle {
       h(
         'div',
         { class: 'end-actions' },
-        quiz
-          ? h('button', { class: 'btn btn-soft btn-big', type: 'button', on: { click: () => env.go(quiz!.path, { replace: true }) } }, h('span', { html: icon('quiz', 18) }), quiz.label)
-          : null,
+        study && leftInScope > 0
+          ? h(
+              'button',
+              { class: 'btn btn-soft btn-big', type: 'button', on: { click: () => env.go(`sessie/${study.kind}/${study.id}/${round + 1}`, { replace: true }) } },
+              h('span', { html: icon('play', 18) }),
+              `Nog een ronde · ${Math.min(leftInScope, next!.items.length)}`,
+            )
+          : quiz
+            ? h('button', { class: 'btn btn-soft btn-big', type: 'button', on: { click: () => env.go(quiz!.path, { replace: true }) } }, h('span', { html: icon('quiz', 18) }), quiz.label)
+            : null,
         h('button', { class: 'btn btn-primary btn-big', type: 'button', text: 'Klaar', on: { click: () => env.back('') } }),
       ),
     );

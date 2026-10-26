@@ -229,6 +229,47 @@ export function sampleItems(
   return shuffle(picked, rng);
 }
 
+/** A card whose latest quiz answer was wrong, this many days back at most, is a weak spot. */
+export const WEAK_DAYS = 21;
+
+/** At most this share of a sampled quiz goes to weak spots; the rest stays fresh material. */
+export const WEAK_SHARE = 0.4;
+
+/** Cards whose most recent quiz answer was wrong (within WEAK_DAYS). */
+export function weakCards(attempts: readonly QuizAttempt[], now: number = Date.now()): Set<string> {
+  const last = new Map<string, { at: number; correct: boolean }>();
+  for (const a of attempts) {
+    const at = instant(a.answered_at);
+    const prev = last.get(a.card_id);
+    if (!prev || at > prev.at) last.set(a.card_id, { at, correct: a.correct });
+  }
+  const out = new Set<string>();
+  for (const [cardId, v] of last) if (!v.correct && now - v.at <= WEAK_DAYS * 86_400_000) out.add(cardId);
+  return out;
+}
+
+/**
+ * Like sampleItems, but a quiz first goes back to what went wrong lately (his
+ * wish, 26/10: "extra focus op de fouten"): up to 40% of the questions come
+ * from weak cards, asked in another wording when the card has one (the item
+ * that went wrong was in a recent run, so an unseen one is preferred). The rest
+ * is sampled as usual, so every run still brings new questions.
+ */
+export function sampleAdaptive(
+  pool: readonly QuizItem[],
+  recent: ReadonlySet<string>,
+  weak: ReadonlySet<string>,
+  n: number = RUN_LENGTH,
+  rng: () => number = Math.random,
+): QuizItem[] {
+  const weakPool = pool.filter((i) => weak.has(i.card_id));
+  const nWeak = Math.min(Math.ceil(n * WEAK_SHARE), new Set(weakPool.map((i) => i.card_id)).size);
+  const first = nWeak > 0 ? sampleItems(weakPool, recent, nWeak, rng) : [];
+  const taken = new Set(first.map((i) => i.card_id));
+  const rest = sampleItems(pool.filter((i) => !taken.has(i.card_id)), recent, n - first.length, rng);
+  return shuffle([...first, ...rest], rng);
+}
+
 /* ------------------------------------------------------------------ *
  * A run
  * ------------------------------------------------------------------ */
@@ -289,6 +330,8 @@ export interface RunOptions {
   rng?: () => number;
   runId?: string;
   n?: number;
+  /** For the weak-spot window (tests); defaults to now. */
+  now?: number;
 }
 
 /**
@@ -303,15 +346,30 @@ export function buildRun(scope: QuizScope, data: QuizData, options: RunOptions =
   let items: QuizItem[];
   let title: string;
   let chapterId: string | null = null;
+  const weak = weakCards(data.attempts, options.now ?? Date.now());
   if (scope.kind === 'sessie') {
     const quiz = data.quizzes.find((q) => q.id === scope.id)!;
-    items = poolFor(scope, data); // fixed, in the stored order
+    const fixed = poolFor(scope, data); // the questions chosen when the session was saved
     title = quiz.title;
     chapterId = quiz.chapter_id;
+    if (!data.attempts.some((a) => a.scope === scopeKey(scope))) {
+      items = fixed;
+    } else {
+      // Done before: same material, other questions. All items of the session's
+      // cards, unseen ones and weak cards first, in random order.
+      const cards = cardMap(data.cards);
+      const cardIds = new Set(fixed.map((i) => i.card_id));
+      const pool = data.items.filter((i) => cardIds.has(i.card_id) && usable(i, cards));
+      const recent = recentItemIds(data.attempts, new Set(pool.map((i) => i.id)));
+      const ordered = shuffle(pool, rng).sort(
+        (a, b) => Number(recent.has(a.id)) - Number(recent.has(b.id)) || Number(!weak.has(a.card_id)) - Number(!weak.has(b.card_id)),
+      );
+      items = shuffle(ordered.slice(0, Math.max(fixed.length, 1)), rng);
+    }
   } else {
     const pool = poolFor(scope, data);
     const recent = recentItemIds(data.attempts, new Set(pool.map((i) => i.id)));
-    items = sampleItems(pool, recent, options.n ?? RUN_LENGTH, rng);
+    items = sampleAdaptive(pool, recent, weak, options.n ?? RUN_LENGTH, rng);
     if (scope.kind === 'hoofdstuk') {
       const chapter = data.chapters.find((c) => c.id === scope.id)!;
       chapterId = chapter.id;

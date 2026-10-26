@@ -29,6 +29,7 @@ import {
   sessionQuizList,
   showOptions,
   summarizeRun,
+  weakCards,
   type Grade,
   type QuizData,
 } from './quiz.ts';
@@ -87,18 +88,48 @@ test('scope keys match quiz_attempts.scope', () => {
 
 /* ---- the session quiz ---- */
 
-test('session quiz: exactly its fixed items, in their order; retries ask the same', () => {
+test('session quiz: the first time exactly its fixed items, in their order', () => {
   const d = data();
   const ids = d.items.filter((i) => i.chapter_id === 'SCM-H3').slice(0, 8).map((i) => i.id);
   d.quizzes = [sessionQuiz('q1', ids)];
   const a = buildRun({ kind: 'sessie', id: 'q1' }, d, { rng: seeded(1) })!;
   const b = buildRun({ kind: 'sessie', id: 'q1' }, d, { rng: seeded(99) })!;
   assert.deepEqual(a.questions.map((q) => q.item.id), ids);
-  assert.deepEqual(b.questions.map((q) => q.item.id), ids);
+  assert.deepEqual(b.questions.map((q) => q.item.id), ids, 'not done yet: still the fixed set');
   assert.equal(a.title, 'SCM H3 · dia 121–135');
   assert.equal(a.scope_key, 'sessie:q1');
   assert.equal(a.kind_label, 'Na je studie');
   assert.deepEqual(a.questions.map((q) => q.n), [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test('session quiz done before: same cards, other questions (unseen items first)', () => {
+  const d = data();
+  // 4 cards (h3-00 … h3-03) with 3 items each; the fixed quiz holds their mcq items.
+  const cards = ['h3-00', 'h3-01', 'h3-02', 'h3-03'];
+  const fixed = d.items.filter((i) => cards.includes(i.card_id) && i.format === 'mcq');
+  d.quizzes = [sessionQuiz('q1', fixed.map((i) => i.id))];
+  d.attempts = fixed.map((i, n) => attempt(i, 'run-1-0000-4000-8000-000000000001', 'sessie:q1', true, '2026-10-25', n));
+  const redo = buildRun({ kind: 'sessie', id: 'q1' }, d, { rng: seeded(5), now: Date.parse('2026-10-26T18:00:00Z') })!;
+  assert.equal(redo.questions.length, fixed.length, 'same length');
+  assert.ok(redo.questions.every((q) => cards.includes(q.item.card_id)), 'same material');
+  assert.ok(redo.questions.every((q) => q.item.format !== 'mcq'), 'the mcq items were just asked: other wordings first');
+});
+
+test('weak spots: up to 40% of a chapter quiz goes back to what went wrong, in another wording', () => {
+  const d = data();
+  const wrong = d.items.filter((i) => i.chapter_id === 'SCM-H3' && i.format === 'mcq').slice(0, 3);
+  d.attempts = wrong.map((i, n) => attempt(i, 'run-2-0000-4000-8000-000000000002', 'hoofdstuk:SCM-H3', false, '2026-10-24', n));
+  const now = Date.parse('2026-10-26T18:00:00Z');
+  for (let seed = 1; seed <= 5; seed++) {
+    const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(seed), now })!;
+    const weakAsked = run.questions.filter((q) => wrong.some((w) => w.card_id === q.item.card_id));
+    assert.equal(weakAsked.length, 3, 'all three weak cards come back (40% of 10 = 4 slots)');
+    assert.ok(weakAsked.every((q) => q.item.format !== 'mcq'), 'asked in another wording than the one that went wrong');
+  }
+  // Answered right since: no longer weak. Older than 21 days: forgotten as a weak spot.
+  const fixedLater = [...d.attempts, ...wrong.map((i, n) => attempt(i, 'run-3-0000-4000-8000-000000000003', 'hoofdstuk:SCM-H3', true, '2026-10-25', n))];
+  assert.equal(weakCards(fixedLater, now).size, 0);
+  assert.equal(weakCards(d.attempts, Date.parse('2026-11-20T18:00:00Z')).size, 0);
 });
 
 test('session quiz skips retired items and items of cards that left the queue', () => {

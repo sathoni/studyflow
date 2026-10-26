@@ -1,12 +1,13 @@
 /**
  * Home (SPEC-v3 §2 R1): the greeting with today's ring and the week's bars,
  * a new session quiz above the hero, "Vandaag overhoren" with Start, the
- * instruments for the daytime, a chapter-quiz suggestion, and Mijn vakken.
+ * instruments for the daytime and a chapter-quiz suggestion. The course list
+ * lives only on the Vakken tab (his wish, 26/10: Home must feel calm).
  */
 
 import { h } from '../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
-import { emptyState, questionsLabel, ring, sectionTitle } from '../ui/parts.ts';
+import { emptyState, questionsLabel, ring } from '../ui/parts.ts';
 import { greeting } from '../lib/dates.ts';
 import { readProfile } from '../lib/model.ts';
 import { cardsLabel, minutesLabel, tomorrowQueue } from '../lib/queue.ts';
@@ -15,7 +16,7 @@ import { homeQuizSuggestion } from '../lib/quiz.ts';
 import { dueInstruments } from '../lib/instruments.ts';
 import { streak, weekBars } from '../lib/stats.ts';
 import type { PageEnv } from './shell.ts';
-import { banner, courseRow, openScoreSheet, quizMinutes } from './common.ts';
+import { banner, openScoreSheet, quizMinutes } from './common.ts';
 
 /** "Overdag" stays open or closed while the app is open. */
 let overdagOpen = false;
@@ -39,9 +40,8 @@ export function renderHome(env: PageEnv): Node {
     heroCard(env),
     overdag(env),
     suggestion?.kind === 'hoofdstuk' ? chapterQuizRow(env, suggestion.entry.chapter.id, suggestion.label, suggestion.entry.questions) : null,
-    sectionTitle('Mijn vakken'),
     s.courses.length > 0
-      ? h('div', { class: 'list' }, s.courses.map((c) => courseRow(env, c)))
+      ? null
       : emptyState('cloudCheck', 'Nog niets binnen', 'Je vakken en kaartjes komen vanzelf binnen zodra je iPhone online is.'),
   );
 }

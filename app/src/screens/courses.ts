@@ -9,7 +9,7 @@ import { icon } from '../ui/icons.ts';
 import { chaptersLabel, courseTile, courseVars, emptyState, iconButton, pageTitle, pctLabel, progressBar, questionsLabel } from '../ui/parts.ts';
 import type { Card, Chapter, Course } from '../lib/model.ts';
 import { hasQuizzes } from '../lib/model.ts';
-import { cardsLabel, extraRound, forCourse } from '../lib/queue.ts';
+import { cardsLabel, forCourse, studyRound } from '../lib/queue.ts';
 import { queueInput } from '../lib/data.ts';
 import { chapterQuizList, courseQuizList, isFinished } from '../lib/quiz.ts';
 import { foldInstrument } from '../lib/instruments.ts';
@@ -238,20 +238,34 @@ function instrumentsTab(env: PageEnv, course: Course): Node {
   );
 }
 
-/** The big "Verder studeren" button: today's cards of this course, else an extra round. */
+/**
+ * The buttons at the bottom of a course page: today's cards of this course
+ * ("Verder studeren"), and always a round with the boxes over the whole course
+ * ("Overhoor heel het vak"), for days with more time (his wish, 26/10).
+ */
 function studyButton(env: PageEnv, course: Course): HTMLElement {
   const { s, d } = env;
   const today = forCourse(d.queue, course.id).length + d.queue.repeats.filter((r) => r.item.card.course_id === course.id).length;
-  let button: HTMLElement;
+  const round = studyRound(queueInput(s), { kind: 'vak', id: course.id });
+  const available = round.items.length + round.left;
+  const buttons: HTMLElement[] = [];
   if (today > 0) {
-    button = h('button', { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`sessie/${course.id}`) } }, h('span', { html: icon('play', 18) }), `Verder studeren · nog ${today}`);
-  } else {
-    const extra = extraRound(queueInput(s), d.queue, course.id).length;
-    button = extra > 0
-      ? h('button', { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`sessie/${course.id}/extra`) } }, h('span', { html: icon('play', 18) }), `Extra ronde · ${cardsLabel(extra)}`)
-      : h('button', { class: 'btn btn-big btn-block btn-done', type: 'button', disabled: true }, h('span', { html: icon('checkCircle', 18) }), (d.byCourse.get(course.id)?.length ?? 0) > 0 ? 'Alles gedaan voor vandaag' : 'Nog geen kaartjes');
+    buttons.push(h('button', { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`sessie/${course.id}`) } }, h('span', { html: icon('play', 18) }), `Verder studeren · nog ${today}`));
   }
-  return h('div', { class: 'sticky-cta' }, button);
+  if (available > 0) {
+    buttons.push(
+      h(
+        'button',
+        { class: `btn ${today > 0 ? 'btn-soft' : 'btn-primary'} btn-big btn-block`, type: 'button', on: { click: () => env.go(`sessie/vak/${course.id}/1`) } },
+        h('span', { html: icon('courses', 18) }),
+        `Overhoor heel het vak · ${cardsLabel(available)}`,
+      ),
+    );
+  }
+  if (buttons.length === 0) {
+    buttons.push(h('button', { class: 'btn btn-big btn-block btn-done', type: 'button', disabled: true }, h('span', { html: icon('checkCircle', 18) }), (d.byCourse.get(course.id)?.length ?? 0) > 0 ? 'Alles overlopen voor vandaag' : 'Nog geen kaartjes'));
+  }
+  return h('div', { class: 'sticky-cta' }, ...buttons);
 }
 
 /* ------------------------------------------------------------------ *
@@ -299,14 +313,39 @@ export function renderChapter(env: PageEnv): Node {
     cards.length > 0
       ? h('div', { class: 'card list-card' }, cards.map((c) => cardRow(env, c, open)))
       : emptyState('courses', 'Nog geen kaartjes in dit hoofdstuk'),
-    quiz && hasQuizzes(chapter.course_id)
-      ? h(
-          'div',
-          { class: 'sticky-cta' },
-          h('button', { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`quizrun/hoofdstuk/${chapter.id}`) } }, h('span', { html: icon('quiz', 18) }), `Quiz dit hoofdstuk · ${questionsLabel(quiz.questions)}`),
-        )
-      : null,
+    chapterButtons(env, chapter, quiz && hasQuizzes(chapter.course_id) ? quiz.questions : 0),
   );
+}
+
+/**
+ * The bottom of a chapter page: overhoren with the boxes (any time, in rounds of
+ * 20) and the chapter quiz.
+ */
+function chapterButtons(env: PageEnv, chapter: Chapter, questions: number): HTMLElement | null {
+  const round = studyRound(queueInput(env.s), { kind: 'hoofdstuk', id: chapter.id });
+  const available = round.items.length + round.left;
+  const buttons: HTMLElement[] = [];
+  if (available > 0) {
+    buttons.push(
+      h(
+        'button',
+        { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`sessie/hoofdstuk/${chapter.id}/1`) } },
+        h('span', { html: icon('courses', 18) }),
+        `Overhoor dit hoofdstuk · ${cardsLabel(available)}`,
+      ),
+    );
+  }
+  if (questions > 0) {
+    buttons.push(
+      h(
+        'button',
+        { class: `btn ${available > 0 ? 'btn-soft' : 'btn-primary'} btn-big btn-block`, type: 'button', on: { click: () => env.go(`quizrun/hoofdstuk/${chapter.id}`) } },
+        h('span', { html: icon('quiz', 18) }),
+        `Quiz dit hoofdstuk · ${questionsLabel(questions)}`,
+      ),
+    );
+  }
+  return buttons.length ? h('div', { class: 'sticky-cta' }, ...buttons) : null;
 }
 
 /** The stacked bar Nieuw · D1–D5 · Gekend with its legend. */

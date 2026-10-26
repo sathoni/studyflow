@@ -18,6 +18,7 @@ import {
   owedRepeats,
   personalTiming,
   planFor,
+  studyRound,
   tomorrowQueue,
   type QueueInput,
   type QueueItem,
@@ -371,4 +372,26 @@ test('the cap counts due cards only; new cards fill up to new_max on top', () =>
   assert.equal(q.items.filter((i) => i.kind === 'review').length, 20);
   assert.equal(q.items.filter((i) => i.kind === 'new').length, 10);
   assert.equal(q.rolledOver, 5);
+});
+
+/* ---- a round over one chapter or course, any time ---- */
+
+test('study round: due first, then new in chapter order, then early ones; answered today left out', () => {
+  const due = card('SCM-H3', { id: 'due' });
+  const early = card('SCM-H3', { id: 'early' });
+  const fresh2 = card('SCM-H3', { id: 'new-2', sort: 2 });
+  const fresh1 = card('SCM-H3', { id: 'new-1', sort: 1 });
+  const done = card('SCM-H3', { id: 'done-today' });
+  const other = card('FB-H1', { id: 'fb' });
+  const reviews = [
+    ...inBox('due', 2, '2026-10-26'),
+    ...inBox('early', 3, '2026-10-30'), // last seen 23/10, due Friday
+    review('done-today', TODAY, 'gekend'),
+  ];
+  const r = studyRound(input([due, early, fresh2, fresh1, done, other], reviews), { kind: 'hoofdstuk', id: 'SCM-H3' });
+  assert.deepEqual(ids(r.items), ['due', 'new-1', 'new-2', 'early']);
+  assert.equal(r.left, 0);
+  const small = studyRound(input([due, early, fresh2, fresh1], reviews), { kind: 'vak', id: 'SCM' }, 2);
+  assert.deepEqual(ids(small.items), ['due', 'new-1']);
+  assert.equal(small.left, 2, 'the next round carries on');
 });
