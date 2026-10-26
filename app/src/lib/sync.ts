@@ -57,6 +57,9 @@ export const PRUNE_EVERY_MS = 12 * 60 * 60 * 1000;
 /** Flush after this many ratings in a row, without waiting for anything else. */
 export const FLUSH_EVERY_RATINGS = 10;
 
+/** Otherwise flush this long after the last rating (ms). */
+export const FLUSH_AFTER_QUIET_MS = 3000;
+
 /** While the app is open and visible, sync this often. */
 export const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -460,11 +463,29 @@ export class Syncer {
     return this.flushing;
   }
 
-  /** Call after every rating: every 10th one sends the outbox straight away. */
+  /**
+   * Call after every rating: every 10th one sends the outbox straight away, and
+   * otherwise it goes out a few seconds after the last rating. So a session closed
+   * halfway, or one card rated on the train, still reaches the server soon.
+   */
   noteRating(): void {
     this.ratings++;
-    if (this.ratings % FLUSH_EVERY_RATINGS === 0 && this.online()) void this.flushNow().catch(() => undefined);
+    if (this.quietTimer !== null) clearTimeout(this.quietTimer);
+    this.quietTimer = null;
+    if (!this.online()) return;
+    if (this.ratings % FLUSH_EVERY_RATINGS === 0) {
+      void this.flushNow().catch(() => undefined);
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.quietTimer = null;
+      if (this.online()) void this.flushNow().catch(() => undefined);
+    }, FLUSH_AFTER_QUIET_MS);
+    // In the tests (Node) a pending timer must not keep the process alive.
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.quietTimer = timer;
   }
+  private quietTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Start the rhythm: sync now, when the connection returns, when the app
