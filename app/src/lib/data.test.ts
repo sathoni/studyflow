@@ -64,7 +64,7 @@ test('snapshot → today\'s queue and the quiz lists work on the demo', async ()
   assert.equal(chapterQuizList(data).some((c) => c.chapter.course_id === 'BE'), false);
   assert.equal(buildRun({ kind: 'vak', id: 'BE' }, data), null);
   assert.equal(starredIds(s).size, 1);
-  assert.equal(dueInstruments(s.instruments, s.instrumentReviews, s.today).length, 1);
+  assert.equal(dueInstruments(s.instruments, s.instrumentReviews, s.today, queue.plan.courseOrder).length, 1);
 });
 
 test('rate: saved locally, queued, and the queue moves on', async () => {

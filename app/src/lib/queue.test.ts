@@ -71,12 +71,13 @@ test('course order: plan first, then the others by most overdue, then course sor
   assert.deepEqual(order, ['FB', 'OR', 'BE', 'SCM', 'BR', 'IFHT']);
 });
 
-test('nearest exam: only tests within 28 days covering the chapter', () => {
+test('nearest exam: only tests within 10 days covering the chapter', () => {
   const exams = [exam('SCM', '2026-11-18', ['SCM-H2', 'SCM-H3']), exam(null, '2027-01-11'), exam('FB', '2026-11-01', [], 'opdracht')];
-  assert.equal(nearestExamDays({ course_id: 'SCM', chapter_id: 'SCM-H3' }, exams, TODAY), 23);
-  assert.equal(nearestExamDays({ course_id: 'SCM', chapter_id: 'SCM-H9' }, exams, TODAY), Infinity);
-  assert.equal(nearestExamDays({ course_id: 'FB', chapter_id: 'FB-H1' }, exams, TODAY), Infinity, 'opdracht is not a test');
-  assert.equal(nearestExamDays({ course_id: 'FB', chapter_id: 'FB-H1' }, exams, '2026-12-20'), 22, 'all-course exam');
+  assert.equal(nearestExamDays({ course_id: 'SCM', chapter_id: 'SCM-H3' }, exams, TODAY), Infinity, '23 days away: not yet');
+  assert.equal(nearestExamDays({ course_id: 'SCM', chapter_id: 'SCM-H3' }, exams, '2026-11-10'), 8);
+  assert.equal(nearestExamDays({ course_id: 'SCM', chapter_id: 'SCM-H9' }, exams, '2026-11-10'), Infinity);
+  assert.equal(nearestExamDays({ course_id: 'FB', chapter_id: 'FB-H1' }, exams, '2026-10-30'), Infinity, 'opdracht is not a test');
+  assert.equal(nearestExamDays({ course_id: 'FB', chapter_id: 'FB-H1' }, exams, '2027-01-05'), 6, 'all-course exam');
 });
 
 /* ---- due cards ---- */
@@ -123,7 +124,7 @@ test('needs_check and retired cards never enter the queue', () => {
 
 /* ---- new cards ---- */
 
-test('new cards: up to new_max, near test first, then course order, oldest, sort', () => {
+test('new cards: up to new_max, near test first, then the plan courses take turns', () => {
   const fbOld = card('FB-H1', { id: 'fb-old', created_at: '2026-10-01T10:00:00Z' });
   const fbYoung = card('FB-H1', { id: 'fb-young', created_at: '2026-10-20T10:00:00Z' });
   const scmB = card('SCM-H3', { id: 'scm-b', sibling_group: 'g1', sort: 2, created_at: '2026-10-22T10:00:00Z' });
@@ -132,15 +133,14 @@ test('new cards: up to new_max, near test first, then course order, oldest, sort
   const q = buildQueue(
     input([fbOld, fbYoung, scmB, scmA, or], [], {
       dayPlans: [plan(TODAY, ['FB', 'OR'], { new_max: 4 })],
-      exams: [exam('SCM', '2026-11-18', ['SCM-H3'])],
+      exams: [exam('SCM', '2026-11-03', ['SCM-H3'])],
     }),
   );
-  // SCM has the near test, so its two cards are picked first. The other two
-  // slots follow the course order (FB before OR, as the day plan says), and
-  // within FB the oldest card first: OR's even older card waits, because course
-  // order comes before age (SPEC-v3 §3, step 4). The list itself is grouped per
+  // SCM has a test within 10 days, so its two cards are picked first. The other
+  // two slots go to the courses the day plan names, taking turns (FB, then OR),
+  // each in its own order (FB's oldest first). The list itself is grouped per
   // course in today's order (FB, OR, then SCM).
-  assert.deepEqual(ids(q.items), ['fb-old', 'fb-young', 'scm-a', 'scm-b']);
+  assert.deepEqual(ids(q.items), ['fb-old', 'or-1', 'scm-a', 'scm-b']);
   assert.ok(q.items.every((i) => i.kind === 'new'));
   assert.equal(q.total, 4);
 });

@@ -176,7 +176,7 @@ function heroCard(env: PageEnv): HTMLElement {
 
 function overdag(env: PageEnv): HTMLElement | null {
   const { ctx, s, d } = env;
-  const due = dueInstruments(s.instruments, s.instrumentReviews, s.today);
+  const due = dueInstruments(s.instruments, s.instrumentReviews, s.today, d.queue.plan.courseOrder);
   if (due.length === 0 || due.every((x) => x.doneToday)) return null;
   const open = due.filter((x) => !x.doneToday);
   const minutes = open.reduce((sum, x) => sum + (x.instrument.minutes || 10), 0);

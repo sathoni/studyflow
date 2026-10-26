@@ -26,7 +26,7 @@ import { addDays, daysBetween, instant, isSunday } from './dates.ts';
 export const MAX_REPEATS = 2;
 
 /** A test this close (in days) puts its chapters' new cards first. */
-export const NEAR_EXAM_DAYS = 28;
+export const NEAR_EXAM_DAYS = 10;
 
 /* ------------------------------------------------------------------ *
  * Inputs and outputs
@@ -306,6 +306,18 @@ export function buildQueue(input: QueueInput): TodayQueue {
       a.card.id.localeCompare(b.card.id)
     );
   });
+  // Spread fresh cards over the courses the day plan names first ("eerst IFHT en FB"):
+  // they take turns, so each gets new cards, before the other courses. Cards a quiz
+  // flagged and cards of a near test keep their place in front.
+  if (base.planOrder.length >= 2) {
+    const front = newCards.filter((r) => (r.state.due !== null && r.state.due <= today) || Number.isFinite(near.get(r.card.id)!));
+    const rest = newCards.filter((r) => !front.includes(r));
+    const lanes = base.planOrder.map((c) => rest.filter((r) => r.card.course_id === c));
+    const mixed: typeof newCards = [];
+    for (let i = 0; lanes.some((l) => i < l.length); i++) for (const l of lanes) if (i < l.length) mixed.push(l[i]);
+    const others = rest.filter((r) => !base.planOrder.includes(r.card.course_id));
+    newCards.splice(0, newCards.length, ...front, ...mixed, ...others);
+  }
   const newDone = newCards.filter((r) => done.has(r.card.id));
   const newPending = newCards.filter((r) => !done.has(r.card.id));
   const newSlots = Math.max(0, Math.min(base.newMax, base.cap + base.newMax - dueTaken.size));

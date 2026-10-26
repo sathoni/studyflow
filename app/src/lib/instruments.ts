@@ -73,25 +73,35 @@ export interface DueInstrument {
   doneToday: boolean;
 }
 
+/** At most this many instruments are offered per day: it is a short daytime block. */
+export const MAX_INSTRUMENTS_PER_DAY = 2;
+
 /**
- * The "Overdag" row on Home: instruments due today (or overdue), plus the ones
- * already scored today so the row does not jump. Only active instruments.
+ * The "Overdag" row on Home: the ones already scored today (so the row does not
+ * jump), then at most two open ones. First those whose next date has come; then
+ * never-practised ones, but only from the courses today's plan names first, in
+ * that order. Only active instruments.
  */
 export function dueInstruments(
   instruments: readonly Instrument[],
   reviews: readonly InstrumentReview[],
   today: Day,
+  courseOrder: readonly string[] = [],
 ): DueInstrument[] {
-  const out: DueInstrument[] = [];
+  const done: DueInstrument[] = [];
+  const started: DueInstrument[] = [];
+  const fresh: DueInstrument[] = [];
   for (const instrument of instruments) {
     if (instrument.status && !['actief', 'active', 'live'].includes(instrument.status)) continue;
     const state = foldInstrument(instrument.id, reviews);
-    const doneToday = state.last_day === today;
-    if (doneToday || state.due === null || state.due <= today) out.push({ instrument, state, doneToday });
+    if (state.last_day === today) done.push({ instrument, state, doneToday: true });
+    else if (state.due !== null && state.due <= today) started.push({ instrument, state, doneToday: false });
+    else if (state.due === null && courseOrder.includes(instrument.course_id)) fresh.push({ instrument, state, doneToday: false });
   }
-  return out.sort(
-    (a, b) => Number(a.doneToday) - Number(b.doneToday) || (a.state.due ?? '').localeCompare(b.state.due ?? ''),
-  );
+  started.sort((a, b) => (a.state.due ?? '').localeCompare(b.state.due ?? ''));
+  fresh.sort((a, b) => courseOrder.indexOf(a.instrument.course_id) - courseOrder.indexOf(b.instrument.course_id));
+  const open = [...started, ...fresh].slice(0, Math.max(0, MAX_INSTRUMENTS_PER_DAY - done.length));
+  return [...open, ...done];
 }
 
 /** The instrument_reviews row for a score (uuid made here; a resend is harmless). */

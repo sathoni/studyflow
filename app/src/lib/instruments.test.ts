@@ -43,7 +43,7 @@ test('Bijna keeps the step, Veel fout starts over, across the clock change', () 
   assert.equal(scorePreview(s, 'veel_fout'), 1);
 });
 
-test('Overdag: never practised and overdue ones show, done today stays visible, retired ones never', () => {
+test('Overdag: overdue ones show, done today stays visible, retired ones never', () => {
   const list = dueInstruments(
     [instrument('a'), instrument('b'), instrument('c'), instrument('d', 'retired')],
     [row('2026-10-22', 'bijna', 'b'), row('2026-10-26', 'alles', 'c'), row('2026-10-25', 'alles', 'a')],
@@ -51,8 +51,16 @@ test('Overdag: never practised and overdue ones show, done today stays visible, 
   );
   // a: due 28/10 → hidden; b: due 23/10 → shown; c: done today → shown last.
   assert.deepEqual(list.map((d) => [d.instrument.id, d.doneToday]), [['b', false], ['c', true]]);
-  const fresh = dueInstruments([instrument('x')], [], '2026-10-26');
-  assert.equal(fresh[0].state.due, null);
+});
+
+test('Overdag: never-practised ones only from today\'s plan courses, at most two a day', () => {
+  const fresh = [instrument('x'), instrument('y'), instrument('z')];
+  assert.equal(dueInstruments(fresh, [], '2026-10-26').length, 0, 'no plan course: nothing new is pushed');
+  const today = dueInstruments(fresh, [], '2026-10-26', ['FB', 'SCM']);
+  assert.equal(today.length, 2);
+  assert.equal(today[0].state.due, null);
+  const oneDone = dueInstruments(fresh, [row('2026-10-26', 'alles', 'x')], '2026-10-26', ['SCM']);
+  assert.deepEqual(oneDone.map((d) => [d.instrument.id, d.doneToday]), [['y', false], ['x', true]]);
 });
 
 test('the row the phone sends', () => {
