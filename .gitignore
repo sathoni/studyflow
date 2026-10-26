@@ -31,3 +31,5 @@ __pycache__/
 # Private notes, research and course content stay on the PC (OneDrive), never in the public repo.
 docs/
 pipeline/
+
+app/graphify-out/
