@@ -1,0 +1,33 @@
+# Dependencies and build output (junctions to C:\Users\User\AppData\Local\StudyFlow on the PC).
+node_modules/
+app/node_modules
+app/dist
+dist/
+
+# Work data and slide renders: private and copyrighted, never in git.
+work/
+slides/
+*.webp
+!app/public/demo/placeholder.webp
+!docs/reference-design.webp
+
+# Secrets: tokens live in C:\Users\User\.studyflow\tokens.json, never here.
+tokens.json
+.studyflow/
+.env
+.env.*
+*.key
+
+# Tool output.
+.playwright-mcp/
+graphify-out/cache/
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+__pycache__/
+*.pyc
+
+# Private notes, research and course content stay on the PC (OneDrive), never in the public repo.
+docs/
+pipeline/

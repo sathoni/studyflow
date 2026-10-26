@@ -1,0 +1,23 @@
+{
+  // Only for checking types (npm run typecheck). esbuild builds the app and Node runs the
+  // tests by stripping the types, so the settings below keep the code inside what both
+  // of them understand: explicit .ts imports, no enums, no parameter properties.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noUnusedLocals": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"],
+  // The service worker has its own global world (WebWorker), which clashes with the DOM
+  // types; it is a near-copy of the proven Andrea file and is left out of the check.
+  "exclude": ["src/sw.ts"]
+}

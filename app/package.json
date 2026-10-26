@@ -1,0 +1,21 @@
+{
+  "name": "studyflow",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc -p .",
+    "build": "node build.mjs",
+    "serve": "node tools/serve.mjs dist",
+    "icons": "node tools/make-icons-ts.mjs",
+    "icons:png": "python tools/make_icons.py",
+    "deps": "node tools/deps.mjs"
+  },
+  "devDependencies": {
+    "@phosphor-icons/core": "^2.1.1",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  }
+}

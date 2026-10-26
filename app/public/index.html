@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="nl-BE">
+<head>
+<meta charset="utf-8">
+<title>StudyFlow</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="description" content="Kaartjes en mini-quizzen voor je vakken.">
+<meta name="color-scheme" content="light dark">
+
+<!-- The stored theme (Profiel → Donkere modus) before the first paint, so a
+     dark choice never flashes white. Without a choice the phone decides. -->
+<script>
+try {
+  var t = localStorage.getItem('studyflow.theme');
+  if (t === 'donker') document.documentElement.setAttribute('data-theme', 'dark');
+  else if (t === 'licht') document.documentElement.setAttribute('data-theme', 'light');
+} catch (e) {}
+</script>
+
+<!-- No white flash: the page colour is set here, before app.css arrives. -->
+<style>
+  html { background: #F4F6FB; }
+  @media (prefers-color-scheme: dark) { html:not([data-theme="light"]) { background: #0B1020; } }
+  html[data-theme="dark"] { background: #0B1020; }
+</style>
+
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="stylesheet" href="./app.css">
+<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+
+<!-- The status bar takes the app's own colour in both themes. -->
+<meta name="theme-color" content="#F4F6FB" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B1020" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="StudyFlow">
+<meta name="format-detection" content="telephone=no">
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
