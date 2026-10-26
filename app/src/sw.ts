@@ -40,8 +40,12 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      // One by one, so one missing file cannot fail the whole install.
-      .then((cache) => Promise.all(SHELL.map((url) => cache.add(url).catch(() => undefined))))
+      // One by one, so one missing file cannot fail the whole install. "reload"
+      // skips the browser's HTTP cache: GitHub Pages lets files be cached for 10
+      // minutes, and the new build must not fill its cache with the old app.js.
+      .then((cache) =>
+        Promise.all(SHELL.map((url) => cache.add(new Request(url, { cache: 'reload' })).catch(() => undefined))),
+      )
       .then(() => self.skipWaiting()),
   );
 });
@@ -70,8 +74,17 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  // "no-cache" = always ask the server whether the file changed (a cheap 304 when
+  // not), instead of trusting the 10-minute HTTP cache: right after a publish the
+  // phone must get the new version, not a copy from before. A navigation request
+  // cannot be re-made with options, so it is fetched by its URL.
+  const network =
+    request.mode === 'navigate'
+      ? fetch(request.url, { cache: 'no-cache', credentials: 'same-origin' })
+      : fetch(request, { cache: 'no-cache' });
+
   event.respondWith(
-    fetch(request)
+    network
       .then((response) => {
         if (response && response.status === 200 && response.type === 'basic') {
           const copy = response.clone();
