@@ -345,6 +345,10 @@ function chapterButtons(env: PageEnv, chapter: Chapter, questions: number): HTML
       ),
     );
   }
+  // Every card answered today: say so instead of letting the button vanish.
+  if (available === 0 && (env.d.byChapter.get(chapter.id)?.length ?? 0) > 0) {
+    buttons.push(h('button', { class: 'btn btn-big btn-block btn-done', type: 'button', disabled: true }, h('span', { html: icon('checkCircle', 18) }), 'Alles overlopen voor vandaag'));
+  }
   return buttons.length ? h('div', { class: 'sticky-cta' }, ...buttons) : null;
 }
 
