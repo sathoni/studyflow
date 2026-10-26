@@ -12,7 +12,7 @@ import {
   firstTryShare,
   goalProgress,
   hardestCards,
-  masteredShare,
+  knownShare,
   quizzesThisWeek,
   streak,
   weekBars,
@@ -78,22 +78,25 @@ test('first try share: first-pass answers of the last 14 days; hint counts as ri
   assert.equal(firstTryShare([], MON), null);
 });
 
-test('box spread, mastered share and hardest cards', () => {
+test('box spread, known share and hardest cards', () => {
   const c1 = card('SCM-H3');
   const c2 = card('SCM-H3');
   const c3 = card('SCM-H3');
   const c4 = card('SCM-H3', { status: 'retired' });
+  const c5 = card('SCM-H3');
   const rows = [
     review(c1.id, '2026-10-01', 'gekend'), // → 2
     review(c1.id, '2026-10-04', 'gekend'), // → 3
     review(c2.id, '2026-10-01', 'gekend'),
     review(c2.id, '2026-10-04', 'niet'), // lapse → 1
+    review(c5.id, '2026-10-04', 'gekend'), // first time → 2
   ];
-  const states = currentStates([c1, c2, c3, c4], rows);
+  const states = currentStates([c1, c2, c3, c4, c5], rows);
   assert.equal(states.has(c4.id), false, 'retired cards are left out');
   assert.deepEqual(boxSpread([c1.id, c2.id, c3.id], states), [1, 1, 0, 1, 0, 0, 0]);
-  assert.equal(masteredShare([c1.id, c2.id, c3.id], states), 1 / 3);
-  assert.equal(masteredShare([], states), null);
+  assert.equal(knownShare([c1.id, c2.id, c3.id], states), 1 / 3);
+  assert.equal(knownShare([c1.id, c2.id, c3.id, c5.id], states), 2 / 4, 'one Gekend already counts (Doos 2)');
+  assert.equal(knownShare([], states), null);
   const hard = hardestCards([c1, c2, c3], states, new Set([c3.id]));
   assert.deepEqual(hard.map((c) => c.id), [c3.id, c2.id], 'starred first, then lapses; c1 never lapsed');
 });

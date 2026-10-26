@@ -9,7 +9,7 @@ import { queueInput, quizData, starredIds } from '../lib/data.ts';
 import type { CardState } from '../lib/leitner.ts';
 import { buildQueue, type TodayQueue } from '../lib/queue.ts';
 import type { QuizData } from '../lib/quiz.ts';
-import { currentStates, masteredShare } from '../lib/stats.ts';
+import { currentStates, knownShare } from '../lib/stats.ts';
 
 export interface Derived {
   courses: Map<string, Course>;
@@ -54,9 +54,9 @@ export function derive(s: Snapshot): Derived {
   };
 }
 
-/** The % for a course or chapter: share of its cards in Doos 3 or higher. */
+/** The % for a course or chapter: share of its cards he knew last time (Doos 2+). */
 export function shareOf(d: Derived, cards: readonly Card[] | undefined): number | null {
-  return masteredShare((cards ?? []).map((c) => c.id), d.states);
+  return knownShare((cards ?? []).map((c) => c.id), d.states);
 }
 
 /** Chapters of a course that hold live cards or are known, in order. */

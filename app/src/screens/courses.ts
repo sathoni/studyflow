@@ -362,7 +362,7 @@ export function spreadCard(spread: number[]): HTMLElement {
         n > 0 ? h('span', { class: 'legend-item' }, h('i', { class: `sw box-bg-${box}` }), `${SPREAD_LABELS[box]} ${n}`) : null,
       ),
     ),
-    h('span', { class: 'sr-only', text: `${Math.round(((spread[3] + spread[4] + spread[5] + spread[6]) / total) * 100)}% in Doos 3 of hoger` }),
+    h('span', { class: 'sr-only', text: `${Math.round(((spread[2] + spread[3] + spread[4] + spread[5] + spread[6]) / total) * 100)}% gekend (Doos 2 of hoger)` }),
   );
 }
 

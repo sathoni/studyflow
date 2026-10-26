@@ -51,7 +51,7 @@ export function renderProgress(env: PageEnv): Node {
           { class: 'prog-head' },
           courseTile(course, 'sm'),
           h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: course.name }), h('span', { class: 'row-sub', text: cardsLabel(cards.length) })),
-          h('span', { class: 'prog-pct' }, h('b', { text: pctLabel(share) }), h('small', { text: 'Doos 3+' })),
+          h('span', { class: 'prog-pct' }, h('b', { text: pctLabel(share) }), h('small', { text: 'gekend' })),
         ),
         spreadBar(spread),
         h(

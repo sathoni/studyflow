@@ -139,13 +139,16 @@ export function boxSpread(cardIds: Iterable<string>, states: ReadonlyMap<string,
 }
 
 /**
- * The course and chapter %: the share of the cards in Doos 3 or higher
- * (Gekend included). Null when there are no cards.
+ * The course and chapter %: the share of the cards he knew the last time he
+ * saw them, i.e. Doos 2 or higher (Gekend included). A new card reaches Doos 2
+ * with its first Gekend, so the % moves from the first review; "Doos 3 or
+ * higher" stayed at 0% for days (his feedback, 26/10). Null when there are no
+ * cards.
  */
-export function masteredShare(cardIds: readonly string[], states: ReadonlyMap<string, CardState>): number | null {
+export function knownShare(cardIds: readonly string[], states: ReadonlyMap<string, CardState>): number | null {
   if (cardIds.length === 0) return null;
   let n = 0;
-  for (const id of cardIds) if ((states.get(id)?.box ?? 0) >= 3) n++;
+  for (const id of cardIds) if ((states.get(id)?.box ?? 0) >= 2) n++;
   return n / cardIds.length;
 }
 
