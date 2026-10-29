@@ -15,6 +15,7 @@ import { h, fill } from './ui/dom.ts';
 import { resolveAccess, isDemoHash } from './lib/access.ts';
 import { openStore } from './lib/db.ts';
 import { Rest, Syncer } from './lib/sync.ts';
+import { refreshPush } from './lib/push.ts';
 import { ImageCache, demoImages, cardImagePaths } from './lib/images.ts';
 import { Actions, loadSnapshot, queueInput } from './lib/data.ts';
 import { buildQueue } from './lib/queue.ts';
@@ -48,13 +49,15 @@ async function boot(): Promise<void> {
   const store = opened.store;
 
   let syncer: Syncer | null = null;
+  let rest: Rest | null = null;
   let images = demoImages(DEMO_PLACEHOLDER);
   if (access.mode === 'demo') {
     await seedDemo(store);
   } else {
-    const rest = new Rest({ key: access.key });
+    rest = new Rest({ key: access.key });
     syncer = new Syncer({ store, rest });
-    images = new ImageCache({ sign: (paths) => rest.signImages(paths), blobs: opened.blobs });
+    const signer = rest;
+    images = new ImageCache({ sign: (paths) => signer.signImages(paths), blobs: opened.blobs });
   }
 
   const actions = new Actions(store, { onRating: () => syncer?.noteRating() });
@@ -64,6 +67,7 @@ async function boot(): Promise<void> {
     actions,
     images,
     syncer,
+    rest,
     snapshot: () => loadSnapshot(store),
     onSync: (listener) => (syncer ? syncer.onState(listener) : (listener('idle'), () => undefined)),
     degraded: opened.degraded,
@@ -86,6 +90,9 @@ async function boot(): Promise<void> {
   );
   await shell.start();
   store.onChange(() => shell.scheduleRedraw());
+
+  // Reminders: hand the phone's address over again on every start (iOS may change it).
+  if (rest) void refreshPush(rest).catch(() => undefined);
 
   if (syncer) {
     syncer.start();

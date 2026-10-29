@@ -3,16 +3,25 @@
  * choice and juist/fout, a text field for invullen and rekenen, one hint per
  * question, then a feedback panel with the explanation, every option's
  * "waarom", the source and "Volgende vraag". The end screen shows the score,
- * the mistakes, and "Deze 2 kaartjes komen morgen terug".
+ * the mistakes, "Deze 2 kaartjes komen morgen terug" and "Oefen je fouten".
+ *
+ * quizrun/fouten/<run id> practises the mistakes of that run: a card answered
+ * wrong again comes back at the end, in another wording, until every card is
+ * right (at most three tries each). A little sound marks right and wrong
+ * answers and the end (his wish, 30/10).
  */
 
 import { h, fill } from '../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
 import { openSheet } from '../ui/overlay.ts';
 import { buzz, chip, iconButton, ring } from '../ui/parts.ts';
+import { sounds } from '../ui/sound.ts';
 import type { NumericAnswer } from '../lib/model.ts';
 import {
+  buildMistakeRun,
   buildRun,
+  cardsStillWrong,
+  retryQuestion,
   scopeCourse,
   type Grade,
   type QuizAnswer,
@@ -53,14 +62,22 @@ export function quizRunMode(env: PageEnv): ModeHandle {
   let busy = false;
 
   function start(): void {
-    run = ['sessie', 'hoofdstuk', 'vak'].includes(kind) ? buildRun(scope, d.qdata) : null;
+    run =
+      kind === 'fouten' ? buildMistakeRun(scope.id, d.qdata) : ['sessie', 'hoofdstuk', 'vak'].includes(kind) ? buildRun(scope, d.qdata) : null;
     index = 0;
     grades = new Map();
     finished = false;
     if (!run) return showNothing();
     const course = d.courses.get(run.course_id);
     const chapter = run.chapter_id ? d.chapters.get(run.chapter_id) : null;
-    const label = run.scope.kind === 'vak' ? `${run.course_id} – Gemengde quiz` : chapter ? `${run.course_id} – ${chapter.title}` : run.title;
+    const label =
+      run.scope.kind === 'fouten'
+        ? `Je fouten · ${run.title}`
+        : run.scope.kind === 'vak'
+          ? `${run.course_id} – Gemengde quiz`
+          : chapter
+            ? `${run.course_id} – ${chapter.title}`
+            : run.title;
     title.replaceChildren(h('i', { class: 'dot', style: `--cc:${course?.color ?? '#2F6BFF'}` }), h('span', { class: 'mode-title-text', text: label }));
     showQuestion();
   }
@@ -196,6 +213,13 @@ export function quizRunMode(env: PageEnv): ModeHandle {
       const { grade } = await ctx.actions.answerQuiz(run, q, given, hintUsed);
       grades.set(q.n, grade);
       buzz(grade.correct ? 8 : 18);
+      if (grade.correct) sounds.right();
+      else sounds.wrong();
+      // Practising mistakes: a wrong card comes back at the end, in another wording.
+      if (run.scope.kind === 'fouten' && !grade.correct) {
+        const again = retryQuestion(run, q.item.card_id, d.qdata);
+        if (again) run.questions.push(again);
+      }
       showFeedback(q, grade);
     } finally {
       busy = false;
@@ -277,15 +301,37 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     counter.textContent = `${run.questions.length} / ${run.questions.length}`;
     progress.style.width = '100%';
     const share = result.total ? result.correct / result.total : 0;
-    const message = share >= 0.8 ? 'Sterk gedaan!' : share >= 0.5 ? 'Goed bezig' : 'Nog even oefenen';
+    const practice = run.scope.kind === 'fouten';
+    const left = practice ? cardsStillWrong(run, grades) : [];
+    const practised = new Set(run.questions.map((q) => q.item.card_id)).size;
+    const message = practice
+      ? left.length === 0
+        ? 'Alles juist! 🎉'
+        : `Nog ${left.length === 1 ? '1 kaartje' : `${left.length} kaartjes`} om te oefenen`
+      : share >= 0.8
+        ? 'Sterk gedaan!'
+        : share >= 0.5
+          ? 'Goed bezig'
+          : 'Nog even oefenen';
+    if ((practice && left.length === 0) || (!practice && share >= 0.8)) sounds.fanfare();
+    else sounds.done();
+    // The cards that went wrong in this run, for "Oefen je fouten".
+    const toFix = practice ? left.length : new Set(result.mistakes.map((m) => m.question.item.card_id)).size;
     fill(
       body,
       h(
         'div',
         { class: 'end quiz-end' },
-        ring(share, 132, result.score),
+        practice ? ring(left.length === 0 ? 1 : (practised - left.length) / practised, 132, `${practised - left.length}/${practised}`) : ring(share, 132, result.score),
         h('h1', { class: 'end-title', text: message }),
-        h('p', { class: 'end-sub', text: `${run.kind_label} · ${run.title}` }),
+        h('p', {
+          class: 'end-sub',
+          text: practice
+            ? left.length === 0
+              ? `Je kent ze nu allemaal. Morgen komen ze nog één keer terug, om het te laten plakken.`
+              : 'Doe ze gerust nog een keer: elke keer in andere woorden.'
+            : `${run.kind_label} · ${run.title}`,
+        }),
         result.mistakes.length > 0
           ? h(
               'section',
@@ -304,13 +350,28 @@ export function quizRunMode(env: PageEnv): ModeHandle {
         result.backLabel ? h('p', { class: 'back-tomorrow' }, h('span', { html: icon('calendar', 18) }), result.backLabel) : null,
       ),
     );
+    const fixRun = run.run_id;
     fill(
       foot,
+      toFix > 0
+        ? h(
+            'button',
+            {
+              class: 'btn btn-primary btn-big btn-block fix-btn',
+              type: 'button',
+              on: { click: () => env.go(`quizrun/fouten/${fixRun}`, { replace: true }) },
+            },
+            h('span', { html: icon('target', 18) }),
+            practice ? `Nog eens · ${toFix === 1 ? '1 kaartje' : `${toFix} kaartjes`}` : `Oefen je fouten · ${toFix === 1 ? '1 kaartje' : `${toFix} kaartjes`}`,
+          )
+        : null,
       h(
         'div',
         { class: 'end-actions' },
-        h('button', { class: 'btn btn-soft btn-big', type: 'button', on: { click: () => start() } }, h('span', { html: icon('sync', 18) }), run.scope.kind === 'sessie' ? 'Opnieuw' : 'Nog een quiz'),
-        h('button', { class: 'btn btn-primary btn-big', type: 'button', text: 'Klaar', on: { click: () => env.back('quiz') } }),
+        practice
+          ? null
+          : h('button', { class: 'btn btn-soft btn-big', type: 'button', on: { click: () => start() } }, h('span', { html: icon('sync', 18) }), run.scope.kind === 'sessie' ? 'Opnieuw' : 'Nog een quiz'),
+        h('button', { class: `btn ${toFix > 0 ? 'btn-soft' : 'btn-primary'} btn-big`, type: 'button', text: 'Klaar', on: { click: () => env.back('quiz') } }),
       ),
     );
     body.scrollTop = 0;
@@ -334,14 +395,22 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     progress.style.width = '0';
     // Business English never has a quiz, whatever the address asked for (vak or hoofdstuk).
     const be = (['sessie', 'hoofdstuk', 'vak'].includes(kind) ? scopeCourse(scope, d.qdata) : null) === 'BE';
+    const fouten = kind === 'fouten';
     fill(
       body,
       h(
         'div',
         { class: 'end' },
-        h('span', { class: 'end-check muted', html: icon('quiz', 56) }),
-        h('h1', { class: 'end-title', text: be ? 'Geen quiz voor Business English' : 'Nog geen vragen' }),
-        h('p', { class: 'end-sub', text: be ? 'Business English heeft geen mini-quizzen; de kaartjes kan je wel overhoren.' : 'Deze quiz heeft (nog) geen vragen. Ze komen samen met je kaartjes binnen.' }),
+        h('span', { class: 'end-check muted', html: icon(fouten ? 'checkCircle' : 'quiz', 56) }),
+        h('h1', { class: 'end-title', text: fouten ? 'Geen fouten om te oefenen' : be ? 'Geen quiz voor Business English' : 'Nog geen vragen' }),
+        h('p', {
+          class: 'end-sub',
+          text: fouten
+            ? 'Alles uit die quiz was juist, of de kaartjes zijn er niet meer.'
+            : be
+              ? 'Business English heeft geen mini-quizzen; de kaartjes kan je wel overhoren.'
+              : 'Deze quiz heeft (nog) geen vragen. Ze komen samen met je kaartjes binnen.',
+        }),
       ),
     );
     fill(foot, h('button', { class: 'btn btn-primary btn-big btn-block', type: 'button', text: 'Terug', on: { click: () => env.back('quiz') } }));

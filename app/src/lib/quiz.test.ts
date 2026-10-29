@@ -6,9 +6,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Card, Quiz, QuizAttempt, QuizItem } from './model.ts';
 import {
+  MAX_FIX_TRIES,
   RUN_LENGTH,
   attemptRow,
+  buildMistakeRun,
   buildRun,
+  cardsStillWrong,
   chapterQuizList,
   courseQuizList,
   formatBelgianNumber,
@@ -22,9 +25,12 @@ import {
   parseScope,
   poolFor,
   recentItemIds,
+  retryQuestion,
   runLength,
   runScores,
+  runsAgo,
   sampleItems,
+  wrongCardsOf,
   scopeKey,
   sessionQuizList,
   showOptions,
@@ -115,7 +121,7 @@ test('session quiz done before: same cards, other questions (unseen items first)
   assert.ok(redo.questions.every((q) => q.item.format !== 'mcq'), 'the mcq items were just asked: other wordings first');
 });
 
-test('weak spots: up to 40% of a chapter quiz goes back to what went wrong, in another wording', () => {
+test('weak spots: up to half of a chapter quiz goes back to what went wrong, in another wording', () => {
   const d = data();
   const wrong = d.items.filter((i) => i.chapter_id === 'SCM-H3' && i.format === 'mcq').slice(0, 3);
   d.attempts = wrong.map((i, n) => attempt(i, 'run-2-0000-4000-8000-000000000002', 'hoofdstuk:SCM-H3', false, '2026-10-24', n));
@@ -123,7 +129,7 @@ test('weak spots: up to 40% of a chapter quiz goes back to what went wrong, in a
   for (let seed = 1; seed <= 5; seed++) {
     const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(seed), now })!;
     const weakAsked = run.questions.filter((q) => wrong.some((w) => w.card_id === q.item.card_id));
-    assert.equal(weakAsked.length, 3, 'all three weak cards come back (40% of 10 = 4 slots)');
+    assert.equal(weakAsked.length, 3, 'all three weak cards come back (half of 10 = 5 slots)');
     assert.ok(weakAsked.every((q) => q.item.format !== 'mcq'), 'asked in another wording than the one that went wrong');
   }
   // Answered right since: no longer weak. Older than 21 days: forgotten as a weak spot.
@@ -552,4 +558,119 @@ test('a chapter with 9 cards and 27 items announces 9 questions, not 10', () => 
   assert.deepEqual([entry.pool, entry.questions], [27, 9]);
   assert.equal(buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(2) })!.questions.length, 9);
   assert.equal(homeQuizSuggestion(d)?.label, 'Mini-quiz · SCM H3 · 9 vragen');
+});
+
+/* ---- smarter quizzes (30/10): no repeats, all mistakes back, "Oefen je fouten" ---- */
+
+/** Answer every question of a run, wrong for the cards in `wrong`. */
+function answerRun(run: { run_id: string; scope_key: string; questions: { item: QuizItem }[] }, day: string, wrong: ReadonlySet<string> = new Set()): QuizAttempt[] {
+  return run.questions.map((q, n) => attempt(q.item, run.run_id, run.scope_key, !wrong.has(q.item.card_id), day, n));
+}
+
+test('quizzing one chapter again and again: every card comes before any card repeats', () => {
+  const d = data();
+  const cards = d.cards.filter((c) => c.chapter_id === 'SCM-H3').map((c) => c.id);
+  let attempts: QuizAttempt[] = [];
+  const asked: string[][] = [];
+  for (let r = 0; r < 3; r++) {
+    const day = `2026-10-2${r}`;
+    const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, { ...d, attempts }, { rng: seeded(r + 1), runId: `run-${r}-0000-4000-8000-000000000000`, n: 4 })!;
+    asked.push(run.questions.map((q) => q.item.card_id));
+    attempts = [...attempts, ...answerRun(run, day)];
+  }
+  // 12 cards, 4 questions a run: three runs cover all twelve, none twice.
+  assert.deepEqual([...asked.flat()].sort(), [...cards].sort());
+  // The fourth run starts again with the cards asked longest ago (run 1).
+  const fourth = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, { ...d, attempts }, { rng: seeded(9), n: 4 })!;
+  assert.deepEqual(fourth.questions.map((q) => q.item.card_id).sort(), [...asked[0]].sort());
+  // And in another wording than the first time.
+  const firstItems = new Set(attempts.filter((a) => a.run_id.startsWith('run-0')).map((a) => a.item_id));
+  assert.ok(fourth.questions.every((q) => !firstItems.has(q.item.id)));
+});
+
+test('runsAgo: 0 for the latest run, then older; never asked is missing', () => {
+  const d = data();
+  const [a, b, c] = d.items.filter((i) => i.chapter_id === 'SCM-H3');
+  const rows = [attempt(a, 'run-old', 'hoofdstuk:SCM-H3', true, '2026-10-20'), attempt(b, 'run-new', 'hoofdstuk:SCM-H3', true, '2026-10-22')];
+  const ago = runsAgo(rows, new Set([a.id, b.id, c.id]));
+  assert.deepEqual([ago.get(b.id), ago.get(a.id), ago.has(c.id)], [0, 1, false]);
+});
+
+test('five mistakes out of ten: all five come back in the next chapter quiz, in other words', () => {
+  const d = data();
+  const first = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(3), runId: 'run-a-0000-4000-8000-000000000000' })!;
+  const wrong = new Set(first.questions.slice(0, 5).map((q) => q.item.card_id));
+  const attempts = answerRun(first, '2026-10-29', wrong);
+  for (let seed = 1; seed <= 5; seed++) {
+    const next = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, { ...d, attempts }, { rng: seeded(seed), now: Date.parse('2026-10-30T18:00:00Z') })!;
+    const back = next.questions.filter((q) => wrong.has(q.item.card_id));
+    assert.equal(back.length, 5, `seed ${seed}`);
+    const missed = new Set(attempts.filter((a) => !a.correct).map((a) => a.item_id));
+    assert.ok(back.every((q) => !missed.has(q.item.id)), 'another wording than the one that went wrong');
+  }
+});
+
+test('a session quiz done before never asks one card twice while it skips another', () => {
+  const d = data();
+  const cards = ['h3-00', 'h3-01', 'h3-02', 'h3-03'];
+  // The first time: the mcq and the tf of four cards (8 questions).
+  const fixed = d.items.filter((i) => cards.includes(i.card_id) && (i.format === 'mcq' || i.format === 'tf'));
+  d.quizzes = [sessionQuiz('q1', fixed.map((i) => i.id))];
+  d.attempts = fixed.map((i, n) => attempt(i, 'run-1-0000-4000-8000-000000000001', 'sessie:q1', true, '2026-10-25', n));
+  for (let seed = 1; seed <= 5; seed++) {
+    const redo = buildRun({ kind: 'sessie', id: 'q1' }, d, { rng: seeded(seed) })!;
+    assert.equal(redo.questions.length, 8, 'as long as the first time');
+    const perCard = cards.map((c) => redo.questions.filter((q) => q.item.card_id === c).length);
+    assert.deepEqual(perCard, [2, 2, 2, 2], `seed ${seed}: every card, none skipped`);
+    assert.equal(new Set(redo.questions.map((q) => q.item.id)).size, 8, 'never the same question twice');
+  }
+});
+
+test('Oefen je fouten: the cards that went wrong, in another wording', () => {
+  const d = data();
+  const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(4), runId: 'run-f-0000-4000-8000-000000000000' })!;
+  const wrong = new Set(run.questions.slice(2, 5).map((q) => q.item.card_id));
+  d.attempts = answerRun(run, '2026-10-29', wrong);
+  assert.deepEqual(new Set(wrongCardsOf(d.attempts, run.run_id)), wrong);
+  const fix = buildMistakeRun(run.run_id, d, { rng: seeded(1), runId: 'fix-1-0000-4000-8000-000000000000' })!;
+  assert.equal(fix.scope_key, `fouten:${run.run_id}`);
+  assert.equal(fix.kind_label, 'Je fouten oefenen');
+  assert.equal(fix.title, 'SCM H3');
+  assert.deepEqual(new Set(fix.questions.map((q) => q.item.card_id)), wrong);
+  const missed = new Set(d.attempts.filter((a) => !a.correct).map((a) => a.item_id));
+  assert.ok(fix.questions.every((q) => !missed.has(q.item.id)), 'other words than the ones that went wrong');
+  assert.equal(buildMistakeRun('run-without-mistakes', d), null);
+});
+
+test('Oefen je fouten: a wrong card comes back in another wording, three tries at most, until it is right', () => {
+  const d = data();
+  const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(4), runId: 'run-g-0000-4000-8000-000000000000' })!;
+  const cardId = run.questions[0].item.card_id;
+  d.attempts = answerRun(run, '2026-10-29', new Set([cardId]));
+  const fix = buildMistakeRun(run.run_id, d, { rng: seeded(2) })!;
+  const grades = new Map<number, Grade>();
+  const wrongGrade = { correct: false } as Grade;
+  const rightGrade = { correct: true } as Grade;
+  // Wrong, wrong: each time another wording comes back at the end.
+  grades.set(1, wrongGrade);
+  fix.questions.push(retryQuestion(fix, cardId, d, seeded(3))!);
+  grades.set(2, wrongGrade);
+  fix.questions.push(retryQuestion(fix, cardId, d, seeded(4))!);
+  assert.equal(fix.questions.length, MAX_FIX_TRIES);
+  assert.equal(new Set(fix.questions.map((q) => q.item.id)).size, 3, 'three different wordings');
+  assert.equal(retryQuestion(fix, cardId, d), null, 'no fourth try');
+  assert.deepEqual(cardsStillWrong(fix, grades), [cardId]);
+  // Right on the third try: nothing left to fix.
+  grades.set(3, rightGrade);
+  assert.deepEqual(cardsStillWrong(fix, grades), []);
+});
+
+test('practising mistakes is not a score: no course average, and the scope is known', () => {
+  const d = data();
+  const [i] = d.items.filter((x) => x.chapter_id === 'SCM-H3');
+  const runId = '1b2c3d4e-0000-4000-8000-000000000000';
+  d.attempts = [attempt(i, 'fix-run', `fouten:${runId}`, true, '2026-10-29')];
+  assert.deepEqual(parseScope(`fouten:${runId}`), { kind: 'fouten', id: runId });
+  assert.equal(runScores(d)[0].course_id, null);
+  assert.equal(courseQuizList(d).find((c) => c.course.id === 'SCM')!.runs, 0);
 });

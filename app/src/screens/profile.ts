@@ -1,8 +1,8 @@
 /**
  * Profiel (SPEC-v3 §2): who, the streak with this week's check circles, the
  * three goals, and the settings: theme (Systeem / Licht / Donker), the
- * reminder (from Phase 5), the sync line, "Back-up downloaden" and the
- * version. No account, no "Uitloggen".
+ * reminders at 7:00 and 21:00, the sounds, the sync line, "Back-up
+ * downloaden" and the version. No account, no "Uitloggen".
  */
 
 import { h } from '../ui/dom.ts';
@@ -13,6 +13,8 @@ import { readGoals, readProfile } from '../lib/model.ts';
 import { cardsLabel } from '../lib/queue.ts';
 import { runScores } from '../lib/quiz.ts';
 import { firstTryShare, goalProgress, quizzesThisWeek, streak, weekBars } from '../lib/stats.ts';
+import { currentState, disablePush, enablePush, quickState, type PushState } from '../lib/push.ts';
+import { setSound, soundOn, sounds } from '../ui/sound.ts';
 import { applyTheme, readTheme, type Theme } from '../context.ts';
 import { BUILD_ID } from '../updates.ts';
 import type { PageEnv } from './shell.ts';
@@ -105,12 +107,8 @@ export function renderProfile(env: PageEnv): Node {
       { class: 'card settings' },
       h('h2', { class: 'card-title', text: 'Instellingen' }),
       settingRow('moon', 'Donkere modus', themeControl()),
-      settingRow(
-        'bell',
-        'Meldingen',
-        h('span', { class: 'switch', role: 'switch', 'aria-checked': 'false', 'aria-disabled': 'true', title: 'Komt in een volgende versie' }, h('i')),
-        'Elke avond om 21:00 · komt binnenkort',
-      ),
+      pushRow(env),
+      soundRow(),
       syncRow(env),
       settingRow(
         'download',
@@ -121,6 +119,71 @@ export function renderProfile(env: PageEnv): Node {
     ),
     h('p', { class: 'version', text: `StudyFlow · versie ${BUILD_ID}${ctx.mode === 'demo' ? ' · demo' : ''}` }),
   );
+}
+
+const PUSH_TEXT: Record<PushState, string> = {
+  on: 'Om 7:00 (herhaling) en 21:00 (nieuwe kaartjes)',
+  off: 'Tik om een herinnering te krijgen om 7:00 en 21:00',
+  denied: 'Staat uit in Instellingen → StudyFlow → Meldingen',
+  'browser-tab': 'Open StudyFlow via het icoon op je beginscherm',
+  unsupported: 'Deze browser kan geen meldingen tonen',
+};
+
+/**
+ * Meldingen: the reminders at 7:00 and 21:00. The tap itself asks iOS for
+ * permission (the question must come first, nothing may be awaited before it).
+ */
+function pushRow(env: PageEnv): HTMLElement {
+  const { ctx } = env;
+  const rest = ctx.rest;
+  let state: PushState = ctx.mode === 'demo' || !rest ? 'unsupported' : quickState();
+  const sw = h('button', { class: 'switch', type: 'button', role: 'switch', 'aria-label': 'Meldingen' }, h('i')) as HTMLButtonElement;
+  const row = settingRow('bell', 'Meldingen', sw, ctx.mode === 'demo' ? 'Niet in de demo' : PUSH_TEXT[state]);
+  const sub = row.querySelector<HTMLElement>('.setting-sub');
+  const paint = () => {
+    const usable = state === 'on' || state === 'off';
+    sw.setAttribute('aria-checked', String(state === 'on'));
+    sw.setAttribute('aria-disabled', String(!usable));
+    sw.disabled = !usable;
+    if (sub && ctx.mode !== 'demo') sub.textContent = PUSH_TEXT[state];
+  };
+  paint();
+  if (rest && ctx.mode !== 'demo') {
+    void currentState()
+      .then((s) => {
+        state = s;
+        paint();
+      })
+      .catch(() => undefined);
+    sw.addEventListener('click', () => {
+      if (sw.disabled) return;
+      sw.classList.add('busy');
+      const action = state === 'on' ? disablePush(rest) : enablePush(rest);
+      void action
+        .then((s) => {
+          state = s;
+          paint();
+          if (s === 'on') toast('Meldingen staan aan: om 7:00 en om 21:00.');
+          if (s === 'denied') toast('Meldingen geweigerd. Aanzetten kan in Instellingen → StudyFlow.');
+        })
+        .catch(() => toast('Dat lukte niet. Probeer het zo nog eens.'))
+        .finally(() => sw.classList.remove('busy'));
+    });
+  }
+  return row;
+}
+
+/** Geluiden: the little sounds of quizzes and lists, on this device. */
+function soundRow(): HTMLElement {
+  const sw = h('button', { class: 'switch', type: 'button', role: 'switch', 'aria-label': 'Geluiden' }, h('i')) as HTMLButtonElement;
+  const paint = () => sw.setAttribute('aria-checked', String(soundOn()));
+  paint();
+  sw.addEventListener('click', () => {
+    setSound(!soundOn());
+    paint();
+    if (soundOn()) sounds.right();
+  });
+  return settingRow('sparkle', 'Geluiden', sw, 'Bij een juist antwoord en als je klaar bent');
 }
 
 function settingRow(iconName: string, label: string, control: Node, sub?: string): HTMLElement {

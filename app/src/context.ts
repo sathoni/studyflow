@@ -8,7 +8,7 @@
 import type { Store } from './lib/store.ts';
 import type { Actions, Snapshot } from './lib/data.ts';
 import type { Images } from './lib/images.ts';
-import type { SyncState, Syncer } from './lib/sync.ts';
+import type { Rest, SyncState, Syncer } from './lib/sync.ts';
 
 export type Theme = 'systeem' | 'licht' | 'donker';
 
@@ -19,6 +19,8 @@ export interface AppContext {
   images: Images;
   /** null in demo mode: nothing is ever sent. */
   syncer: Syncer | null;
+  /** The server calls with his key (reminders); null in demo mode. */
+  rest: Rest | null;
   /** Everything on the phone right now (instant, never waits for the network). */
   snapshot(): Promise<Snapshot>;
   /** Hear about the sync state (offline banner, "laatste update …"). */

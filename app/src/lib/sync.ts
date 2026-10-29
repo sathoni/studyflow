@@ -121,6 +121,16 @@ export class Rest {
     return response;
   }
 
+  /** POST /rest/v1/rpc/<name>: one of the sf_ functions the phone may call (they check the key). */
+  async rpc<T = unknown>(name: string, args: Record<string, unknown>): Promise<T> {
+    const response = await this.call(`${this.config.url}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify(args),
+    });
+    return (await response.json()) as T;
+  }
+
   /** GET /rest/v1/<table>?<query>, as rows. */
   async select<T = Record<string, unknown>>(table: string, query: string): Promise<T[]> {
     const response = await this.call(`${this.config.url}/rest/v1/${table}?${query}`, {

@@ -9,9 +9,14 @@
  *   hoofdstuk  The chapter quiz: 10 questions sampled from the chapter's pool.
  *   vak        The mixed course quiz: 10 questions from every chapter.
  *
- * A sampled run takes at most one item per card, mixes the formats, prefers
- * items he did not see in his last two runs over the same material, and
- * shuffles the options. The pool grows every night, so runs keep changing.
+ * A sampled run takes at most one item per card, mixes the formats, goes
+ * through every question of the material before it asks one again (the least
+ * recently asked first; his remark of 30/10: "niet telkens dezelfde vragen"),
+ * sends what went wrong lately back first, and shuffles the options.
+ *
+ *   fouten     "Oefen je fouten" (his wish, 30/10): after a run, the cards he got
+ *              wrong, each in another wording when it has one. A card answered
+ *              wrong again comes back at the end, until every card is right.
  *
  * Grading is lenient where a person would be: typed answers ignore case,
  * accents, punctuation and a leading article, forgive one typo in a longer
@@ -48,7 +53,7 @@ export const RECENT_RUNS = 2;
  * Scopes
  * ------------------------------------------------------------------ */
 
-export type QuizKind = 'sessie' | 'hoofdstuk' | 'vak';
+export type QuizKind = 'sessie' | 'hoofdstuk' | 'vak' | 'fouten';
 
 /** What a run covers. `id` is a quiz id, a chapter id or a course id. */
 export interface QuizScope {
@@ -56,21 +61,22 @@ export interface QuizScope {
   id: string;
 }
 
-/** 'sessie:<quiz_id>', 'hoofdstuk:<chapter_id>' or 'vak:<course_id>' (quiz_attempts.scope). */
+/** 'sessie:<quiz_id>', 'hoofdstuk:<chapter_id>', 'vak:<course_id>' or 'fouten:<run_id>' (quiz_attempts.scope). */
 export function scopeKey(scope: QuizScope): string {
   return `${scope.kind}:${scope.id}`;
 }
 
 export function parseScope(value: string | null | undefined): QuizScope | null {
-  const m = /^(sessie|hoofdstuk|vak):(.+)$/.exec(value ?? '');
+  const m = /^(sessie|hoofdstuk|vak|fouten):(.+)$/.exec(value ?? '');
   return m ? { kind: m[1] as QuizKind, id: m[2] } : null;
 }
 
-/** 'Na je studie', 'Hoofdstukquiz', 'Gemengde quiz'. */
+/** 'Na je studie', 'Hoofdstukquiz', 'Gemengde quiz', 'Je fouten oefenen'. */
 export const KIND_LABELS: Record<QuizKind, string> = {
   sessie: 'Na je studie',
   hoofdstuk: 'Hoofdstukquiz',
   vak: 'Gemengde quiz',
+  fouten: 'Je fouten oefenen',
 };
 
 /** The tag on each question. */
@@ -92,10 +98,14 @@ export interface QuizData {
   attempts: readonly QuizAttempt[];
 }
 
-/** Which course a scope belongs to, or null when it points at nothing known. */
+/**
+ * Which course a scope belongs to, or null when it points at nothing known. A
+ * "fouten" run belongs to no course of its own: it practises another run.
+ */
 export function scopeCourse(scope: QuizScope, data: Pick<QuizData, 'chapters' | 'quizzes'>): string | null {
   if (scope.kind === 'vak') return scope.id;
   if (scope.kind === 'hoofdstuk') return data.chapters.find((c) => c.id === scope.id)?.course_id ?? null;
+  if (scope.kind === 'fouten') return null;
   return data.quizzes.find((q) => q.id === scope.id)?.course_id ?? null;
 }
 
@@ -166,6 +176,42 @@ export function recentItemIds(
   return recent;
 }
 
+/**
+ * How many runs ago each item of the pool was last asked: 0 = the latest run
+ * that asked anything from the pool, 1 = the one before, and so on. Items never
+ * asked are missing. With it a quiz goes through every question of the
+ * material before it repeats one, however often he quizzes the same chapter.
+ */
+export function runsAgo(attempts: readonly QuizAttempt[], poolIds: ReadonlySet<string>): Map<string, number> {
+  const byRun = new Map<string, { items: Set<string>; last: number }>();
+  for (const a of attempts) {
+    if (!poolIds.has(a.item_id)) continue;
+    let run = byRun.get(a.run_id);
+    if (!run) byRun.set(a.run_id, (run = { items: new Set(), last: 0 }));
+    run.items.add(a.item_id);
+    run.last = Math.max(run.last, instant(a.answered_at));
+  }
+  const out = new Map<string, number>();
+  [...byRun.values()]
+    .sort((a, b) => b.last - a.last)
+    .forEach((run, i) => run.items.forEach((id) => (out.has(id) ? undefined : out.set(id, i))));
+  return out;
+}
+
+/** Seen items: a set (seen lately, all equally) or runsAgo's map; missing = never asked. */
+export type Seen = ReadonlySet<string> | ReadonlyMap<string, number>;
+
+/** How long ago an item was asked, in runs; Infinity when never. Bigger is fresher. */
+function ago(seen: Seen, id: string): number {
+  if (!seen.has(id)) return Infinity;
+  return seen instanceof Map ? (seen.get(id) as number) : 0;
+}
+
+/** Fresher first (Infinity, the never-asked, before everything else). */
+function fresherFirst(a: number, b: number): number {
+  return a === b ? 0 : a > b ? -1 : 1;
+}
+
 /** Fisher–Yates on a copy. `rng` returns [0, 1). */
 export function shuffle<T>(list: readonly T[], rng: () => number = Math.random): T[] {
   const out = [...list];
@@ -178,16 +224,18 @@ export function shuffle<T>(list: readonly T[], rng: () => number = Math.random):
 
 /**
  * Pick up to `n` items: at most one per card, formats as even as the pool
- * allows, unseen items before recently seen ones, in random order.
+ * allows, the freshest material first (cards never asked, then the ones asked
+ * longest ago; per card its least recently asked wording), in random order.
  *
- * Step by step: the cards are shuffled, cards that still have an unseen item
- * go first, and each step takes the first card that offers one of the formats
- * used least so far. That keeps the randomness of the card order while it
- * stops ten multiple-choice questions in a row when the pool has other formats.
+ * Step by step: each card offers its freshest wording(s); the cards are
+ * shuffled and grouped from fresh to stale, and each step takes, within the
+ * freshest group left, the first card that offers one of the formats used least
+ * so far. That keeps the randomness of the card order while it stops ten
+ * multiple-choice questions in a row when the pool has other formats.
  */
 export function sampleItems(
   pool: readonly QuizItem[],
-  recent: ReadonlySet<string>,
+  seen: Seen,
   n: number = RUN_LENGTH,
   rng: () => number = Math.random,
 ): QuizItem[] {
@@ -197,23 +245,27 @@ export function sampleItems(
     if (!list) byCard.set(item.card_id, (list = []));
     list.push(item);
   }
-  // Per card, the unseen items, or all of them when every one was seen lately.
+  // Per card, its freshest wording(s), and how long ago the card itself was
+  // asked in any wording: cards never asked, then the ones asked longest ago,
+  // come first, so a quiz goes through all the material before repeating.
   const candidates = new Map<string, QuizItem[]>();
-  const fresh = new Set<string>();
+  const freshness = new Map<string, number>();
   for (const [cardId, items] of byCard) {
-    const unseen = items.filter((i) => !recent.has(i.id));
-    candidates.set(cardId, unseen.length > 0 ? unseen : items);
-    if (unseen.length > 0) fresh.add(cardId);
+    const ages = items.map((i) => ago(seen, i.id));
+    const best = Math.max(...ages);
+    candidates.set(cardId, items.filter((_, k) => ages[k] === best));
+    freshness.set(cardId, Math.min(...ages));
   }
 
-  const order = shuffle([...byCard.keys()], rng);
-  let remaining = [...order.filter((id) => fresh.has(id)), ...order.filter((id) => !fresh.has(id))];
+  // A stable sort keeps the shuffled order within each group.
+  let remaining = shuffle([...byCard.keys()], rng).sort((a, b) => fresherFirst(freshness.get(a)!, freshness.get(b)!));
   const used: Record<QuizFormat, number> = { mcq: 0, tf: 0, cloze: 0, numeric: 0 };
   const picked: QuizItem[] = [];
 
   while (picked.length < n && remaining.length > 0) {
-    // Fresh cards are used up before a recently seen card is asked again.
-    const tier = remaining.some((id) => fresh.has(id)) ? remaining.filter((id) => fresh.has(id)) : remaining;
+    // The freshest cards are used up before a staler one is asked.
+    const top = freshness.get(remaining[0])!;
+    const tier = remaining.filter((id) => freshness.get(id) === top);
     const offered = new Set<QuizFormat>();
     for (const id of tier) for (const i of candidates.get(id)!) offered.add(i.format);
     const least = Math.min(...[...offered].map((f) => used[f]));
@@ -232,8 +284,11 @@ export function sampleItems(
 /** A card whose latest quiz answer was wrong, this many days back at most, is a weak spot. */
 export const WEAK_DAYS = 21;
 
-/** At most this share of a sampled quiz goes to weak spots; the rest stays fresh material. */
-export const WEAK_SHARE = 0.4;
+/**
+ * At most this share of a sampled quiz goes to weak spots; the rest stays fresh
+ * material. Half (30/10): five mistakes out of ten all come back next time.
+ */
+export const WEAK_SHARE = 0.5;
 
 /** Cards whose most recent quiz answer was wrong (within WEAK_DAYS). */
 export function weakCards(attempts: readonly QuizAttempt[], now: number = Date.now()): Set<string> {
@@ -250,23 +305,23 @@ export function weakCards(attempts: readonly QuizAttempt[], now: number = Date.n
 
 /**
  * Like sampleItems, but a quiz first goes back to what went wrong lately (his
- * wish, 26/10: "extra focus op de fouten"): up to 40% of the questions come
+ * wish, 26/10: "extra focus op de fouten"): up to half of the questions come
  * from weak cards, asked in another wording when the card has one (the item
- * that went wrong was in a recent run, so an unseen one is preferred). The rest
- * is sampled as usual, so every run still brings new questions.
+ * that went wrong was asked most recently, so a fresher one is preferred). The
+ * rest is sampled as usual, so every run still brings new questions.
  */
 export function sampleAdaptive(
   pool: readonly QuizItem[],
-  recent: ReadonlySet<string>,
+  seen: Seen,
   weak: ReadonlySet<string>,
   n: number = RUN_LENGTH,
   rng: () => number = Math.random,
 ): QuizItem[] {
   const weakPool = pool.filter((i) => weak.has(i.card_id));
   const nWeak = Math.min(Math.ceil(n * WEAK_SHARE), new Set(weakPool.map((i) => i.card_id)).size);
-  const first = nWeak > 0 ? sampleItems(weakPool, recent, nWeak, rng) : [];
+  const first = nWeak > 0 ? sampleItems(weakPool, seen, nWeak, rng) : [];
   const taken = new Set(first.map((i) => i.card_id));
-  const rest = sampleItems(pool.filter((i) => !taken.has(i.card_id)), recent, n - first.length, rng);
+  const rest = sampleItems(pool.filter((i) => !taken.has(i.card_id)), seen, n - first.length, rng);
   return shuffle([...first, ...rest], rng);
 }
 
@@ -355,21 +410,41 @@ export function buildRun(scope: QuizScope, data: QuizData, options: RunOptions =
     if (!data.attempts.some((a) => a.scope === scopeKey(scope))) {
       items = fixed;
     } else {
-      // Done before: same material, other questions. All items of the session's
-      // cards, unseen ones and weak cards first, in random order.
+      // Done before: same material, other questions, as many as the first time.
+      // One question per card first (weak cards first, the freshest wording of
+      // each), so no card is skipped while another is asked twice; a second
+      // question for a card only when the session has fewer cards than questions.
       const cards = cardMap(data.cards);
       const cardIds = new Set(fixed.map((i) => i.card_id));
       const pool = data.items.filter((i) => cardIds.has(i.card_id) && usable(i, cards));
-      const recent = recentItemIds(data.attempts, new Set(pool.map((i) => i.id)));
-      const ordered = shuffle(pool, rng).sort(
-        (a, b) => Number(recent.has(a.id)) - Number(recent.has(b.id)) || Number(!weak.has(a.card_id)) - Number(!weak.has(b.card_id)),
-      );
-      items = shuffle(ordered.slice(0, Math.max(fixed.length, 1)), rng);
+      const seen = runsAgo(data.attempts, new Set(pool.map((i) => i.id)));
+      const target = Math.max(fixed.length, 1);
+      const picked = sampleAdaptive(pool, seen, weak, target, rng);
+      if (picked.length < target) {
+        // More questions than cards: the extra ones go round the cards (weak
+        // cards first), each card's freshest unused wording, one card at a time.
+        const taken = new Set(picked.map((i) => i.id));
+        const byCard = new Map<string, QuizItem[]>();
+        for (const i of shuffle(pool.filter((x) => !taken.has(x.id)), rng)) {
+          let list = byCard.get(i.card_id);
+          if (!list) byCard.set(i.card_id, (list = []));
+          list.push(i);
+        }
+        for (const list of byCard.values()) list.sort((a, b) => fresherFirst(ago(seen, a.id), ago(seen, b.id)));
+        const order = shuffle([...byCard.keys()], rng).sort((a, b) => Number(!weak.has(a)) - Number(!weak.has(b)));
+        for (let round = 0; picked.length < target && order.some((c) => byCard.get(c)!.length > round); round++) {
+          for (const c of order) {
+            const next = byCard.get(c)![round];
+            if (next && picked.length < target) picked.push(next);
+          }
+        }
+      }
+      items = shuffle(picked, rng);
     }
   } else {
     const pool = poolFor(scope, data);
-    const recent = recentItemIds(data.attempts, new Set(pool.map((i) => i.id)));
-    items = sampleAdaptive(pool, recent, weak, options.n ?? RUN_LENGTH, rng);
+    const seen = runsAgo(data.attempts, new Set(pool.map((i) => i.id)));
+    items = sampleAdaptive(pool, seen, weak, options.n ?? RUN_LENGTH, rng);
     if (scope.kind === 'hoofdstuk') {
       const chapter = data.chapters.find((c) => c.id === scope.id)!;
       chapterId = chapter.id;
@@ -388,14 +463,88 @@ export function buildRun(scope: QuizScope, data: QuizData, options: RunOptions =
     title,
     course_id: courseId,
     chapter_id: chapterId,
-    questions: items.map((item, i) => ({
-      n: i + 1,
-      item,
-      format: item.format,
-      formatLabel: FORMAT_LABELS[item.format],
-      options: showOptions(item, rng),
-    })),
+    questions: items.map((item, i) => toQuestion(item, i + 1, rng)),
   };
+}
+
+function toQuestion(item: QuizItem, n: number, rng: () => number): QuizQuestion {
+  return { n, item, format: item.format, formatLabel: FORMAT_LABELS[item.format], options: showOptions(item, rng) };
+}
+
+/* ------------------------------------------------------------------ *
+ * "Oefen je fouten"
+ * ------------------------------------------------------------------ */
+
+/** At most this many tries per card in "Oefen je fouten", the first one included. */
+export const MAX_FIX_TRIES = 3;
+
+/** The cards whose last answer in a run was wrong, in the order they were asked. */
+export function wrongCardsOf(attempts: readonly QuizAttempt[], runId: string): string[] {
+  const last = new Map<string, QuizAttempt>();
+  for (const a of attempts) {
+    if (a.run_id !== runId) continue;
+    const prev = last.get(a.card_id);
+    if (!prev || instant(a.answered_at) >= instant(prev.answered_at)) last.set(a.card_id, a);
+  }
+  return [...last.values()]
+    .sort((a, b) => instant(a.answered_at) - instant(b.answered_at))
+    .filter((a) => !a.correct)
+    .map((a) => a.card_id);
+}
+
+/**
+ * "Oefen je fouten" for one run (his wish, 30/10: "kijken welke fouten en ervoor
+ * zorgen dat ik alles op alles haal"): every card he got wrong there, asked in
+ * another wording when it has one (the one that went wrong was asked last, so a
+ * fresher one comes first). Null when nothing went wrong or nothing is left.
+ */
+export function buildMistakeRun(runId: string, data: QuizData, options: RunOptions = {}): QuizRun | null {
+  const rng = options.rng ?? Math.random;
+  const cards = cardMap(data.cards);
+  const wrong = wrongCardsOf(data.attempts, runId).filter((id) => cards.get(id)?.status === 'live');
+  const pool = data.items.filter((i) => wrong.includes(i.card_id) && usable(i, cards));
+  if (pool.length === 0) return null;
+  const seen = runsAgo(data.attempts, new Set(pool.map((i) => i.id)));
+  const items = sampleItems(pool, seen, wrong.length, rng);
+  const first = cards.get(items[0].card_id)!;
+  const chapter = data.chapters.find((c) => c.id === first.chapter_id) ?? null;
+  const chapters = new Set(items.map((i) => cards.get(i.card_id)?.chapter_id));
+  return {
+    run_id: options.runId ?? crypto.randomUUID(),
+    scope: { kind: 'fouten', id: runId },
+    scope_key: `fouten:${runId}`,
+    kind_label: KIND_LABELS.fouten,
+    title: chapter && chapters.size === 1 ? `${chapter.course_id} ${chapter.code}` : (data.courses.find((c) => c.id === first.course_id)?.name ?? first.course_id),
+    course_id: first.course_id,
+    chapter_id: chapters.size === 1 ? first.chapter_id : null,
+    questions: items.map((item, i) => toQuestion(item, i + 1, rng)),
+  };
+}
+
+/**
+ * The next try for a card answered wrong in "Oefen je fouten": a wording not yet
+ * asked in this run when the card has one. Null after MAX_FIX_TRIES tries.
+ */
+export function retryQuestion(run: QuizRun, cardId: string, data: QuizData, rng: () => number = Math.random): QuizQuestion | null {
+  const tries = run.questions.filter((q) => q.item.card_id === cardId);
+  if (tries.length >= MAX_FIX_TRIES) return null;
+  const cards = cardMap(data.cards);
+  const items = data.items.filter((i) => i.card_id === cardId && usable(i, cards));
+  if (items.length === 0) return null;
+  const asked = new Set(tries.map((q) => q.item.id));
+  const fresh = items.filter((i) => !asked.has(i.id));
+  const from = fresh.length > 0 ? fresh : items;
+  return toQuestion(from[Math.floor(rng() * from.length)], run.questions.length + 1, rng);
+}
+
+/** Cards of a run whose last answer so far is wrong (for the end of "Oefen je fouten"). */
+export function cardsStillWrong(run: QuizRun, grades: ReadonlyMap<number, Grade>): string[] {
+  const last = new Map<string, boolean>();
+  for (const q of run.questions) {
+    const grade = grades.get(q.n);
+    if (grade) last.set(q.item.card_id, grade.correct);
+  }
+  return [...last].filter(([, right]) => !right).map(([id]) => id);
 }
 
 /* ------------------------------------------------------------------ *
@@ -674,7 +823,8 @@ export function runScores(data: Pick<QuizData, 'attempts' | 'cards' | 'chapters'
       run = {
         run_id: a.run_id,
         scope: a.scope,
-        course_id: (scope && scopeCourse(scope, data)) ?? cards.get(a.card_id)?.course_id ?? null,
+        // Practising mistakes is not a score for the course average.
+        course_id: scope?.kind === 'fouten' ? null : ((scope && scopeCourse(scope, data)) ?? cards.get(a.card_id)?.course_id ?? null),
         day: a.day,
         at: 0,
         correct: 0,

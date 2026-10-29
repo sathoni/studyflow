@@ -10,3 +10,7 @@ export const SUPABASE_KEY = "sb_publishable_3nSYt4M6tbmTF23rOggz9g_0xSDcpQp";
 
 // Edge Function that turns slide paths into signed image URLs (sends x-sf-key as well).
 export const MEDIA_URL = `${SUPABASE_URL}/functions/v1/media`;
+
+// The public half of the key that signs the reminders (Web Push / VAPID). Public by design:
+// the private half was made on the server by the notify function and never left its vault.
+export const VAPID_PUBLIC_KEY = "BE032Gtnk7YMRt_ZmvIVp0QFbYemVKctgH4kPk1Y7TM6GUEho06fkoFaYKRFnjudba087yn3hKkHjYYYGR2lcR8";

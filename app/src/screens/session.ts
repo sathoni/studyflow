@@ -20,6 +20,7 @@ import { h, fill } from '../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
 import { hideToast, toast } from '../ui/overlay.ts';
 import { boxBadge, buzz, chip, iconButton, reducedMotion, rich } from '../ui/parts.ts';
+import { sounds } from '../ui/sound.ts';
 import { visualFrame } from '../ui/visual.ts';
 import type { Card, Review } from '../lib/model.ts';
 import { queueInput } from '../lib/data.ts';
@@ -350,6 +351,8 @@ export function sessionMode(env: PageEnv): ModeHandle {
       reviews.push(row);
       states = foldAll(ids, reviews, { waits });
       session.answer(answer === 'gekend' && used > 0 ? 'hint' : answer);
+      if (answer === 'gekend') sounds.tick();
+      else sounds.wrong();
       lastAnswer = { row, hints: used, at: Date.now() };
       const what =
         step.mode === 'herhaling'
@@ -487,6 +490,10 @@ export function sessionMode(env: PageEnv): ModeHandle {
 
     const failed = sum.failed.map((id) => d.cardById.get(id)).filter((c): c is Card => !!c);
     const nothing = sum.cards === 0 && items.length === 0 && repeats.length === 0;
+    if (!nothing) {
+      if (allDone) sounds.fanfare();
+      else sounds.done();
+    }
 
     // A round over one chapter or course: say what is left there and offer the next round.
     const next = study ? studyRound({ ...queueInput(s), reviews }, study) : null;
