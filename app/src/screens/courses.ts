@@ -239,9 +239,10 @@ function instrumentsTab(env: PageEnv, course: Course): Node {
 }
 
 /**
- * The buttons at the bottom of a course page: today's cards of this course
- * ("Verder studeren"), and always a round with the boxes over the whole course
- * ("Overhoor heel het vak"), for days with more time (his wish, 26/10).
+ * The buttons at the bottom of a course page: this course's cards in today's
+ * lists ("Lijst van vandaag"), and a round with the boxes over the rest of the
+ * course ("Extra · Overhoor heel het vak"), for days with more time (his wish,
+ * 26/10). Extra practice never touches today's lists (his wish, 29/10).
  */
 function studyButton(env: PageEnv, course: Course): HTMLElement {
   const { s, d } = env;
@@ -250,7 +251,7 @@ function studyButton(env: PageEnv, course: Course): HTMLElement {
   const available = round.items.length + round.left;
   const buttons: HTMLElement[] = [];
   if (today > 0) {
-    buttons.push(h('button', { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`sessie/${course.id}`) } }, h('span', { html: icon('play', 18) }), `Verder studeren · nog ${today}`));
+    buttons.push(h('button', { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`sessie/${course.id}`) } }, h('span', { html: icon('play', 18) }), `Lijst van vandaag · nog ${today}`));
   }
   if (available > 0) {
     buttons.push(
@@ -258,7 +259,7 @@ function studyButton(env: PageEnv, course: Course): HTMLElement {
         'button',
         { class: `btn ${today > 0 ? 'btn-soft' : 'btn-primary'} btn-big btn-block`, type: 'button', on: { click: () => env.go(`sessie/vak/${course.id}/1`) } },
         h('span', { html: icon('courses', 18) }),
-        `Overhoor heel het vak · ${cardsLabel(available)}`,
+        `Extra · Overhoor heel het vak · ${cardsLabel(available)}`,
       ),
     );
   }
@@ -318,20 +319,34 @@ export function renderChapter(env: PageEnv): Node {
 }
 
 /**
- * The bottom of a chapter page: overhoren with the boxes (any time, in rounds of
- * 20) and the chapter quiz.
+ * The bottom of a chapter page: this chapter's cards in today's lists, extra
+ * practice with the boxes over the rest (any time, in rounds of 20; it never
+ * touches today's lists) and the chapter quiz.
  */
 function chapterButtons(env: PageEnv, chapter: Chapter, questions: number): HTMLElement | null {
   const round = studyRound(queueInput(env.s), { kind: 'hoofdstuk', id: chapter.id });
   const available = round.items.length + round.left;
+  const today =
+    env.d.queue.remaining.filter((i) => i.card.chapter_id === chapter.id).length +
+    env.d.queue.repeats.filter((r) => r.item.card.chapter_id === chapter.id).length;
   const buttons: HTMLElement[] = [];
+  if (today > 0) {
+    buttons.push(
+      h(
+        'button',
+        { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`sessie/vandaag/${chapter.id}`) } },
+        h('span', { html: icon('play', 18) }),
+        `Lijst van vandaag · nog ${today}`,
+      ),
+    );
+  }
   if (available > 0) {
     buttons.push(
       h(
         'button',
-        { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go(`sessie/hoofdstuk/${chapter.id}/1`) } },
+        { class: `btn ${today > 0 ? 'btn-soft' : 'btn-primary'} btn-big btn-block`, type: 'button', on: { click: () => env.go(`sessie/hoofdstuk/${chapter.id}/1`) } },
         h('span', { html: icon('courses', 18) }),
-        `Overhoor dit hoofdstuk · ${cardsLabel(available)}`,
+        `Extra · Overhoor dit hoofdstuk · ${cardsLabel(available)}`,
       ),
     );
   }
@@ -339,14 +354,14 @@ function chapterButtons(env: PageEnv, chapter: Chapter, questions: number): HTML
     buttons.push(
       h(
         'button',
-        { class: `btn ${available > 0 ? 'btn-soft' : 'btn-primary'} btn-big btn-block`, type: 'button', on: { click: () => env.go(`quizrun/hoofdstuk/${chapter.id}`) } },
+        { class: `btn ${available > 0 || today > 0 ? 'btn-soft' : 'btn-primary'} btn-big btn-block`, type: 'button', on: { click: () => env.go(`quizrun/hoofdstuk/${chapter.id}`) } },
         h('span', { html: icon('quiz', 18) }),
         `Quiz dit hoofdstuk · ${questionsLabel(questions)}`,
       ),
     );
   }
   // Every card answered today: say so instead of letting the button vanish.
-  if (available === 0 && (env.d.byChapter.get(chapter.id)?.length ?? 0) > 0) {
+  if (available === 0 && today === 0 && (env.d.byChapter.get(chapter.id)?.length ?? 0) > 0) {
     buttons.push(h('button', { class: 'btn btn-big btn-block btn-done', type: 'button', disabled: true }, h('span', { html: icon('checkCircle', 18) }), 'Alles overlopen voor vandaag'));
   }
   return buttons.length ? h('div', { class: 'sticky-cta' }, ...buttons) : null;

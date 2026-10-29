@@ -387,14 +387,31 @@ test('study round: due first, then new in chapter order, then early ones; answer
   const reviews = [
     ...inBox('due', 2, '2026-10-26'),
     ...inBox('early', 3, '2026-10-30'), // last seen 23/10, due Friday
-    review('done-today', TODAY, 'gekend'),
+    review('done-today', TODAY, 'gekend', { mode: 'extra' }),
   ];
-  const r = studyRound(input([due, early, fresh2, fresh1, done, other], reviews), { kind: 'hoofdstuk', id: 'SCM-H3' });
+  // A day without room in today's lists: everything is extra practice.
+  const none = [plan(TODAY, [], { cap: 0, new_max: 0 })];
+  const r = studyRound(input([due, early, fresh2, fresh1, done, other], reviews, { dayPlans: none }), { kind: 'hoofdstuk', id: 'SCM-H3' });
   assert.deepEqual(ids(r.items), ['due', 'new-1', 'new-2', 'early']);
-  assert.equal(r.left, 0);
-  const small = studyRound(input([due, early, fresh2, fresh1], reviews), { kind: 'vak', id: 'SCM' }, 2);
+  assert.deepEqual([r.left, r.inToday], [0, 0]);
+  const small = studyRound(input([due, early, fresh2, fresh1], reviews, { dayPlans: none }), { kind: 'vak', id: 'SCM' }, 2);
   assert.deepEqual(ids(small.items), ['due', 'new-1']);
   assert.equal(small.left, 2, 'the next round carries on');
+});
+
+test('extra practice never touches today\'s lists: their cards stay there, the round takes the rest', () => {
+  const due = card('SCM-H3', { id: 'due' });
+  const early = card('SCM-H3', { id: 'early' });
+  const fresh = card('SCM-H3', { id: 'new-1' });
+  const reviews = [...inBox('due', 2, TODAY), ...inBox('early', 3, '2026-10-30')];
+  const all = input([due, early, fresh], reviews);
+  const r = studyRound(all, { kind: 'hoofdstuk', id: 'SCM-H3' });
+  assert.deepEqual(ids(r.items), ['early'], 'the due and the new card wait in today\'s lists');
+  assert.equal(r.inToday, 2);
+  // After the extra round, today's lists are exactly what they were.
+  const after = buildQueue(input([due, early, fresh], [...reviews, review('early', TODAY, 'gekend', { mode: 'extra' })]));
+  assert.deepEqual(ids(after.items), ids(buildQueue(all).items));
+  assert.equal(after.doneCount, 0);
 });
 
 /* ---- two lists a day: 🌅 herhaling at 7:00, 🌙 new cards in the evening (29/10) ---- */

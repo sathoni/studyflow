@@ -57,9 +57,11 @@ export function sessionMode(env: PageEnv): ModeHandle {
   const study: StudyScope | null =
     params[0] === 'hoofdstuk' || params[0] === 'vak' ? { kind: params[0], id: params[1] ?? '' } : null;
   const list = params[0] === 'herhaling' ? 'review' : params[0] === 'nieuw' ? 'new' : null;
+  // sessie/vandaag/<chapter>: today's lists, only that chapter's cards (chapter page).
+  const todayChapter = params[0] === 'vandaag' ? (params[1] ?? '') : null;
   const round = Number(params[2] ?? '1') || 1;
-  const courseId = study || list ? null : (params[0] ?? null);
-  const extra = !study && params[1] === 'extra';
+  const courseId = study || list || todayChapter !== null ? null : (params[0] ?? null);
+  const extra = !study && todayChapter === null && params[1] === 'extra';
   // Rounds outside today's lists are extra practice: logged as 'extra', so they
   // never take a place in today's lists (his wish, 29/10).
   const practice = study !== null || extra;
@@ -73,6 +75,9 @@ export function sessionMode(env: PageEnv): ModeHandle {
   } else if (list) {
     items = d.queue.parts[list].remaining;
     repeats = d.queue.parts[list].repeats;
+  } else if (todayChapter !== null) {
+    items = d.queue.remaining.filter((i) => i.card.chapter_id === todayChapter);
+    repeats = d.queue.repeats.filter((r) => r.item.card.chapter_id === todayChapter);
   } else if (!courseId) {
     items = d.queue.remaining;
     repeats = d.queue.repeats;
@@ -507,7 +512,11 @@ export function sessionMode(env: PageEnv): ModeHandle {
               text:
                 leftInScope > 0
                   ? `Nog ${cardsLabel(leftInScope)} in ${scopeName}. Doe gerust nog een ronde.`
-                  : `Je hebt vandaag alle kaartjes van ${scopeName} overlopen.`,
+                  : next && next.inToday > 0
+                    ? next.inToday === 1
+                      ? 'Het laatste kaartje staat in je lijst van vandaag: dat doe je daar.'
+                      : `De laatste ${next.inToday} kaartjes staan in je lijst van vandaag: die doe je daar.`
+                    : `Je hebt vandaag alle kaartjes van ${scopeName} overlopen.`,
             })
           : h('p', {
               class: 'end-sub',

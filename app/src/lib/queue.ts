@@ -460,16 +460,21 @@ export interface StudyScope {
  * yet, lowest box first: reviewing early still moves a card one box, exactly
  * like pulling a box out of a real Leitner system. Cards answered today are
  * left out, so "Nog een ronde" carries on where the last round stopped.
+ *
+ * This is extra practice (his wish, 29/10): the cards in today's lists are
+ * never part of it, so today's lists stay exactly as planned. `inToday` says
+ * how many cards of the scope still wait in today's lists.
  */
 export function studyRound(
   input: QueueInput,
   scope: StudyScope,
   size: number = STUDY_ROUND,
-): { items: QueueItem[]; left: number } {
+): { items: QueueItem[]; left: number; inToday: number } {
   const done = answeredToday(input.reviews, input.today);
-  const live = input.cards.filter(
-    (c) => c.status === 'live' && !done.has(c.id) && (scope.kind === 'hoofdstuk' ? c.chapter_id === scope.id : c.course_id === scope.id),
-  );
+  const inScope = (c: Card) => (scope.kind === 'hoofdstuk' ? c.chapter_id === scope.id : c.course_id === scope.id);
+  const todays = buildQueue(input).items.filter((i) => inScope(i.card));
+  const inList = new Set(todays.map((i) => i.card.id));
+  const live = input.cards.filter((c) => c.status === 'live' && inScope(c) && !done.has(c.id) && !inList.has(c.id));
   const states = foldAll(live.map((c) => c.id), input.reviews, { waits: input.defaults.wait_days });
   const chapterSort = new Map(input.chapters.map((c) => [c.id, c.sort]));
   const due: Ranked[] = [];
@@ -497,7 +502,7 @@ export function studyRound(
     ...fresh.map((r) => ({ card: r.card, state: r.state, kind: 'new' as const, done: false })),
     ...early.map((r) => ({ card: r.card, state: r.state, kind: 'review' as const, done: false })),
   ];
-  return { items: all.slice(0, size), left: Math.max(0, all.length - size) };
+  return { items: all.slice(0, size), left: Math.max(0, all.length - size), inToday: todays.filter((i) => !i.done).length };
 }
 
 /** Today's list limited to one course ("Verder studeren" on a course page). */
