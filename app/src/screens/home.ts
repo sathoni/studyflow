@@ -1,6 +1,7 @@
 /**
  * Home (SPEC-v3 §2 R1): the greeting with today's ring and the week's bars,
- * a new session quiz above the hero, "Vandaag overhoren" with Start, the
+ * a new session quiz, today's two lists (🌅 Herhaling at 7:00 and 🌙 Nieuwe
+ * kaartjes in the evening, the one for now on top, his wish of 29/10), the
  * instruments for the daytime and a chapter-quiz suggestion. The course list
  * lives only on the Vakken tab (his wish, 26/10: Home must feel calm).
  */
@@ -8,15 +9,15 @@
 import { h } from '../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
 import { emptyState, questionsLabel, ring } from '../ui/parts.ts';
-import { greeting } from '../lib/dates.ts';
+import { ROLLOVER_HOUR, brusselsClock, greeting } from '../lib/dates.ts';
 import { readProfile } from '../lib/model.ts';
-import { cardsLabel, minutesLabel, tomorrowQueue } from '../lib/queue.ts';
+import { cardsLabel, minutesLabel, tomorrowQueue, type QueuePart } from '../lib/queue.ts';
 import { queueInput } from '../lib/data.ts';
 import { homeQuizSuggestion } from '../lib/quiz.ts';
 import { dueInstruments } from '../lib/instruments.ts';
 import { streak, weekBars } from '../lib/stats.ts';
 import type { PageEnv } from './shell.ts';
-import { banner, openScoreSheet, quizMinutes } from './common.ts';
+import { banner, openScoreSheet, quizMinutes, tomorrowLine } from './common.ts';
 
 /** "Overdag" stays open or closed while the app is open. */
 let overdagOpen = false;
@@ -37,7 +38,7 @@ export function renderHome(env: PageEnv): Node {
     banner(env),
     greetingCard(env),
     suggestion?.kind === 'sessie' ? sessionQuizCard(env, suggestion.entry.quiz.id, suggestion.entry.quiz.title, suggestion.entry.questions) : null,
-    heroCard(env),
+    todayLists(env),
     overdag(env),
     suggestion?.kind === 'hoofdstuk' ? chapterQuizRow(env, suggestion.entry.chapter.id, suggestion.label, suggestion.entry.questions) : null,
     s.courses.length > 0
@@ -99,58 +100,101 @@ function sessionQuizCard(env: PageEnv, quizId: string, title: string, n: number)
   );
 }
 
-function heroCard(env: PageEnv): HTMLElement {
+type ListKind = 'review' | 'new';
+
+/** The two lists of the day: 'review' = 🌅 Herhaling at 7:00, 'new' = 🌙 Nieuwe kaartjes in the evening. */
+const LISTS: Record<ListKind, { route: string; kicker: string; title: string; icon: string; reason: string; empty: string }> = {
+  review: {
+    route: 'sessie/herhaling',
+    kicker: '🌅 Ochtend · 7:00',
+    title: 'Herhaling',
+    icon: 'sun',
+    reason: 'Kaartjes uit doos 1 en hoger die vandaag terugkomen.',
+    empty: 'Geen herhaling vandaag',
+  },
+  new: {
+    route: 'sessie/nieuw',
+    kicker: '🌙 Avond · tot je gaat slapen',
+    title: 'Nieuwe kaartjes',
+    icon: 'moon',
+    reason: 'Eerst wat je vandaag en gisteren studeerde.',
+    empty: 'Geen nieuwe kaartjes vandaag',
+  },
+};
+
+const isOpen = (p: QueuePart) => p.remaining.length + p.repeats.length > 0;
+
+/**
+ * Today's two lists, the one for now on top: before noon the morning list,
+ * after noon the evening list. Both stay open all day; a finished list
+ * shrinks to one line.
+ */
+function todayLists(env: PageEnv): HTMLElement[] {
   const { s, d } = env;
   const q = d.queue;
-  const counts = new Map<string, number>();
-  for (const i of q.remaining) counts.set(i.card.course_id, (counts.get(i.card.course_id) ?? 0) + 1);
-  const repeats = q.repeats.length;
-
-  const head = h('div', { class: 'hero-head' }, h('h2', { text: 'Vandaag overhoren' }), h('span', { class: 'hero-icon', html: icon('courses', 20) }));
 
   if (d.live.length === 0) {
-    return h(
-      'section',
-      { class: 'card hero' },
-      head,
-      h('p', { class: 'hero-meta', text: 'Nog geen kaartjes' }),
-      h('p', { class: 'hero-reason', text: 'Na je volgende les of zelfstudie komen ze hier vanzelf binnen.' }),
-    );
-  }
-
-  // Done for today (or nothing was due).
-  if (q.remaining.length === 0 && repeats === 0) {
-    const tomorrow = tomorrowQueue(queueInput(s));
-    return h(
-      'section',
-      { class: 'card hero hero-done' },
-      head,
-      h('p', { class: 'hero-done-title' }, h('span', { class: 'hero-check', html: icon('checkCircle', 26) }), q.total > 0 ? 'Klaar voor vandaag' : 'Niets te overhoren vandaag'),
-      h('p', {
-        class: 'hero-reason',
-        text: tomorrow.total > 0 ? `Morgen ${minutesLabel(tomorrow.totalSec)} · ${cardsLabel(tomorrow.total)}` : 'Morgen niets gepland.',
-      }),
+    return [
       h(
-        'div',
-        { class: 'hero-actions' },
-        h('button', { class: 'btn btn-soft', type: 'button', on: { click: () => env.go('quiz') } }, h('span', { html: icon('quiz', 18) }), 'Quiz'),
-        h('button', { class: 'btn btn-soft', type: 'button', on: { click: () => env.go('vakken') } }, h('span', { html: icon('courses', 18) }), 'Extra oefenen'),
+        'section',
+        { class: 'card hero' },
+        h('div', { class: 'hero-head' }, h('h2', { text: 'Vandaag overhoren' }), h('span', { class: 'hero-icon', html: icon('courses', 20) })),
+        h('p', { class: 'hero-meta', text: 'Nog geen kaartjes' }),
+        h('p', { class: 'hero-reason', text: 'Na je volgende les of zelfstudie komen ze hier vanzelf binnen.' }),
       ),
-    );
+    ];
   }
 
-  const left = q.remaining.length;
-  const label = left === 0 ? `Herhaling · nog ${repeats}` : q.doneCount > 0 ? `Ga verder · nog ${left}` : 'Start';
+  // Both lists done (or nothing at all today).
+  if (!isOpen(q.parts.review) && !isOpen(q.parts.new)) {
+    return [
+      h(
+        'section',
+        { class: 'card hero hero-done' },
+        h('div', { class: 'hero-head' }, h('h2', { text: 'Vandaag overhoren' }), h('span', { class: 'hero-icon', html: icon('courses', 20) })),
+        h('p', { class: 'hero-done-title' }, h('span', { class: 'hero-check', html: icon('checkCircle', 26) }), q.total > 0 ? 'Klaar voor vandaag' : 'Niets te overhoren vandaag'),
+        h('p', { class: 'hero-reason', text: tomorrowLine(tomorrowQueue(queueInput(s))) }),
+        h(
+          'div',
+          { class: 'hero-actions' },
+          h('button', { class: 'btn btn-soft', type: 'button', on: { click: () => env.go('quiz') } }, h('span', { html: icon('quiz', 18) }), 'Quiz'),
+          h('button', { class: 'btn btn-soft', type: 'button', on: { click: () => env.go('vakken') } }, h('span', { html: icon('courses', 18) }), 'Extra oefenen'),
+        ),
+      ),
+    ];
+  }
+
+  const hour = brusselsClock(Date.now()).hour;
+  const order: ListKind[] = hour >= ROLLOVER_HOUR && hour < 12 ? ['review', 'new'] : ['new', 'review'];
+  const open = order.filter((k) => isOpen(q.parts[k]));
+  const closed = order.filter((k) => !isOpen(q.parts[k]));
+  return [...open.map((k, i) => listCard(env, k, i === 0)), ...closed.map((k) => listDone(k, q.parts[k].items.length > 0))];
+}
+
+function listCard(env: PageEnv, kind: ListKind, primary: boolean): HTMLElement {
+  const { d } = env;
+  const q = d.queue;
+  const part = q.parts[kind];
+  const meta = LISTS[kind];
+  const counts = new Map<string, number>();
+  for (const i of part.remaining) counts.set(i.card.course_id, (counts.get(i.card.course_id) ?? 0) + 1);
+  const left = part.remaining.length;
+  const repeats = part.repeats.length;
+  const label = left === 0 ? `Opnieuw · nog ${repeats}` : part.doneCount > 0 ? `Ga verder · nog ${left}` : 'Start';
+  // The day plan's reason ("BR en OR (vandaag gestudeerd)") belongs to the evening list.
+  const reason = kind === 'new' && q.plan.reason ? q.plan.reason : meta.reason;
+
   return h(
     'section',
-    { class: 'card hero' },
-    head,
-    h('p', { class: 'hero-meta', text: `${minutesLabel(q.remainingSec || repeats * q.timing.reviewSec)} · ${cardsLabel(left || repeats)}` }),
+    { class: `card hero${primary ? '' : ' hero-second'}` },
+    h('p', { class: 'hero-kicker', text: meta.kicker }),
+    h('div', { class: 'hero-head' }, h('h2', { text: meta.title }), h('span', { class: 'hero-icon', html: icon(meta.icon, 20) })),
+    h('p', { class: 'hero-meta', text: `${minutesLabel(part.remainingSec || repeats * q.timing.reviewSec)} · ${cardsLabel(left || repeats)}` }),
     left > 0
       ? h(
           'div',
           { class: 'chips' },
-          q.courseChips
+          part.courseChips
             .filter((id) => counts.has(id))
             .map((id) => {
               const course = d.courses.get(id);
@@ -163,14 +207,25 @@ function heroCard(env: PageEnv): HTMLElement {
             }),
         )
       : null,
-    q.plan.reason ? h('p', { class: 'hero-reason', text: q.plan.reason }) : null,
-    q.doneCount > 0 && left > 0 ? h('div', { class: 'hero-progress' }, h('i', { style: `width:${Math.round(q.progress * 100)}%` })) : null,
+    h('p', { class: 'hero-reason', text: reason }),
+    part.doneCount > 0 && left > 0 ? h('div', { class: 'hero-progress' }, h('i', { style: `width:${Math.round(part.progress * 100)}%` })) : null,
     h(
       'button',
-      { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: () => env.go('sessie') } },
+      { class: `btn ${primary ? 'btn-primary' : 'btn-soft'} btn-big btn-block`, type: 'button', on: { click: () => env.go(meta.route) } },
       h('span', { html: icon('play', 18) }),
       label,
     ),
+  );
+}
+
+/** A finished (or empty) list: one quiet line. */
+function listDone(kind: ListKind, had: boolean): HTMLElement {
+  const meta = LISTS[kind];
+  return h(
+    'section',
+    { class: 'card list-done' },
+    h('span', { class: 'list-done-icon', html: icon('checkCircle', 22) }),
+    h('span', { class: 'list-done-text' }, h('b', { text: had ? `${meta.title} klaar` : meta.empty }), h('small', { text: meta.kicker })),
   );
 }
 

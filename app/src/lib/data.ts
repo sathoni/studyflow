@@ -140,6 +140,7 @@ export function queueInput(s: Snapshot): QueueInput {
     exams: s.exams,
     dayPlans: s.dayPlans,
     defaults: s.defaults,
+    sessions: s.sessions,
   };
 }
 
@@ -187,13 +188,14 @@ export class Actions {
 
   /**
    * One answer in a review session. `mode` comes from ReviewSession.current
-   * ('sessie' on the first pass, 'herhaling' on a repeat, which changes no box).
+   * ('sessie' on the first pass, 'herhaling' on a repeat, which changes no box),
+   * or 'extra' on the first pass of extra practice (never counts for today's lists).
    * "Gekend" after a hint is logged as 'hint' (it stays in its box).
    */
   async rate(
     cardId: string,
     answer: SessionAnswer,
-    mode: 'sessie' | 'herhaling',
+    mode: 'sessie' | 'herhaling' | 'extra',
     hintsUsed = 0,
     ms: number | null = null,
   ): Promise<Review> {

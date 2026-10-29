@@ -8,7 +8,7 @@ import { icon } from '../ui/icons.ts';
 import { openSheet, toast } from '../ui/overlay.ts';
 import { boxBadge, chaptersLabel, courseTile, pctLabel, progressBar, rich } from '../ui/parts.ts';
 import type { Card, Course, FlagReason } from '../lib/model.ts';
-import { cardsLabel } from '../lib/queue.ts';
+import { cardsLabel, minutesLabel, type TodayQueue } from '../lib/queue.ts';
 import { SCORE_LABELS, scorePreview, type DueInstrument, type InstrumentState } from '../lib/instruments.ts';
 import type { InstrumentScore } from '../lib/model.ts';
 import { relativeDay } from '../lib/dates.ts';
@@ -238,4 +238,12 @@ export async function copyForClaude(card: Card): Promise<void> {
 /** '±5 min' for a quiz of n questions (about 30 s per question). */
 export function quizMinutes(n: number): string {
   return `±${Math.max(1, Math.round((n * 30) / 60))} min`;
+}
+
+/** What tomorrow morning holds; the evening list depends on what he studies tomorrow. */
+export function tomorrowLine(t: TodayQueue): string {
+  const r = t.parts.review;
+  return r.items.length > 0
+    ? `Morgen om 7:00: herhaling ${minutesLabel(r.remainingSec)} · ${cardsLabel(r.items.length)}`
+    : 'Morgen geen herhaling gepland.';
 }

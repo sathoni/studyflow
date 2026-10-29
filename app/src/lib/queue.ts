@@ -7,20 +7,29 @@
  * vanishing and letting a rolled-over card slip in behind his back. Progress
  * is then simply "ticked off / in the list".
  *
+ * Two lists a day (his wish, 29/10): the morning one at 7:00 holds the cards
+ * whose day has come, the evening one (until he goes to bed, at the latest the
+ * 04:00 rollover) the new cards, what he studied today first.
+ *
  *   1. Course order: the day_plan row first, then the other courses by most overdue.
- *   2. Due cards (due <= today): course order, lowest box, oldest due.
- *   3. Review cap (day_plan.cap, default 20, Sunday 30): the rest rolls over, silently.
- *   4. New cards up to new_max (default 10, Sunday 5): near test first, then course
- *      order, oldest card, sort within a split card.
+ *   2. Morning: due cards (due <= today), course order, lowest box, oldest due,
+ *      up to day_plan.cap (default 20, Sunday 30); the rest rolls over, silently.
+ *   3. Evening: every new card of today's and yesterday's lessons and self-studies,
+ *      always; then other new cards up to day_plan.new_max in all (default 10,
+ *      Sunday 5): quiz-flagged, near test, the plan's courses taking turns, the
+ *      rest; within a course the most recent study first, split cards together.
+ *   4. Extra practice (a chapter or course round, "Nog een ronde") is logged as
+ *      mode 'extra'. It never takes a place in these lists, and a card done that
+ *      way is not asked again the same day.
  *   5. Estimate: 15 s a review, 30 s a new card, his own medians after 14 days.
  *
  * Failed cards come back at the end of the session as "herhaling", at most
  * twice, and those tries never move a box (leitner.ts skips them).
  */
 
-import type { Card, Chapter, Course, DayPlan, Defaults, Exam, Review } from './model.ts';
+import type { Card, Chapter, Course, Day, DayPlan, Defaults, Exam, Review, StudySession } from './model.ts';
 import { type CardState, compareRows, foldAll, undoneIds } from './leitner.ts';
-import { addDays, daysBetween, instant, isSunday } from './dates.ts';
+import { addDays, daysBetween, instant, isDay, isSunday } from './dates.ts';
 
 /** Herhaling tries after a "Niet gekend" in the same session. */
 export const MAX_REPEATS = 2;
@@ -41,6 +50,8 @@ export interface QueueInput {
   exams: readonly Exam[];
   dayPlans: readonly DayPlan[];
   defaults: Defaults;
+  /** Lessons and self-studies: their cards of today and yesterday always go in the evening list. */
+  sessions?: readonly StudySession[];
 }
 
 export interface DayPlanResolved {
@@ -76,11 +87,25 @@ export interface Timing {
   source: 'default' | 'personal';
 }
 
+/** One of the day's two lists: 'review' in the morning, 'new' in the evening. */
+export interface QueuePart {
+  items: QueueItem[];
+  remaining: QueueItem[];
+  repeats: RepeatItem[];
+  doneCount: number;
+  /** 0..1 */
+  progress: number;
+  remainingSec: number;
+  courseChips: string[];
+}
+
 export interface TodayQueue {
   day: string;
   plan: DayPlanResolved;
-  /** The whole day, in order, done items included. */
+  /** The whole day, in order (the evening's new cards, then the morning's), done items included. */
   items: QueueItem[];
+  /** The same items split in the two lists. */
+  parts: { review: QueuePart; new: QueuePart };
   /** Not answered yet, in order. */
   remaining: QueueItem[];
   /** Failed today and still owed a herhaling (they go after `remaining`). */
@@ -176,14 +201,35 @@ export function nearestExamDays(
  * Building the queue
  * ------------------------------------------------------------------ */
 
-/** Cards answered today in a session (mode 'sessie', not undone). */
-export function answeredToday(reviews: readonly Review[], today: string): Set<string> {
+/**
+ * Cards answered today, not undone: in today's lists (mode 'sessie') or, with
+ * `scope` 'any', also as extra practice (mode 'extra'). A card answered either
+ * way is never asked again the same day.
+ */
+export function answeredToday(reviews: readonly Review[], today: string, scope: 'any' | 'list' = 'any'): Set<string> {
   const undone = undoneIds(reviews);
   const out = new Set<string>();
   for (const r of reviews) {
-    if (r.day === today && r.mode === 'sessie' && r.result !== 'undo' && !undone.has(r.id)) {
-      out.add(r.card_id);
-    }
+    if (r.day !== today || r.result === 'undo' || undone.has(r.id)) continue;
+    if (r.mode === 'sessie' || (scope === 'any' && r.mode === 'extra')) out.add(r.card_id);
+  }
+  return out;
+}
+
+/** The study day in a lesson or self-study key ('BR-D2:2026-10-29:1-17'); null for imports. */
+export function sessionDay(session: Pick<StudySession, 'session_key' | 'kind'>): Day | null {
+  if (session.kind === 'import') return null;
+  const day = session.session_key.split(':')[1];
+  return isDay(day) ? day : null;
+}
+
+/** Card id -> the most recent study day of a lesson or self-study holding it. */
+export function studiedOn(sessions: readonly StudySession[]): Map<string, Day> {
+  const out = new Map<string, Day>();
+  for (const s of sessions) {
+    const day = sessionDay(s);
+    if (day === null) continue;
+    for (const id of s.card_ids) if ((out.get(id) ?? '') < day) out.set(id, day);
   }
   return out;
 }
@@ -199,7 +245,7 @@ export function owedRepeats(reviews: readonly Review[], today: string): Map<stri
   const byCard = new Map<string, Review[]>();
   for (const r of reviews) {
     if (r.day !== today || r.result === 'undo' || undone.has(r.id)) continue;
-    if (r.mode !== 'sessie' && r.mode !== 'herhaling') continue;
+    if (r.mode !== 'sessie' && r.mode !== 'herhaling' && r.mode !== 'extra') continue;
     let list = byCard.get(r.card_id);
     if (!list) byCard.set(r.card_id, (list = []));
     list.push(r);
@@ -212,9 +258,11 @@ export function owedRepeats(reviews: readonly Review[], today: string): Map<stri
       if (rows[i].mode === 'sessie') lastFail = rows[i].result === 'niet' ? i : -1;
     }
     if (lastFail < 0) continue;
-    const after = rows.slice(lastFail + 1).filter((r) => r.mode === 'herhaling');
+    // A right answer as extra practice afterwards also settles it.
+    const after = rows.slice(lastFail + 1);
+    const tries = after.filter((r) => r.mode === 'herhaling');
     const right = after.some((r) => r.result === 'gekend' || r.result === 'hint');
-    if (!right && after.length < MAX_REPEATS) owed.set(cardId, after.length + 1);
+    if (!right && tries.length < MAX_REPEATS) owed.set(cardId, tries.length + 1);
   }
   return owed;
 }
@@ -245,7 +293,16 @@ export function buildQueue(input: QueueInput): TodayQueue {
     input.reviews,
     { beforeDay: today, waits: defaults.wait_days },
   );
+  // Answered today in any way (never asked twice), and in today's lists themselves.
   const done = answeredToday(input.reviews, today);
+  const inList = answeredToday(input.reviews, today, 'list');
+  const studied = studiedOn(input.sessions ?? []);
+  const yesterday = addDays(today, -1);
+  /** Studied today or yesterday in a lesson or self-study: always in the evening list. */
+  const fresh = (id: string) => {
+    const day = studied.get(id);
+    return day !== undefined && day >= yesterday && day <= today;
+  };
 
   // Due at the start of the day, and new at the start of the day.
   const dueCards: Ranked[] = [];
@@ -274,68 +331,73 @@ export function buildQueue(input: QueueInput): TodayQueue {
   for (const r of dueCards) r.rank = rankOf(r.card.course_id);
   for (const r of newCards) r.rank = rankOf(r.card.course_id);
 
-  // 2 + 3. Due cards, sorted, under the cap. Cards already answered today keep
-  // their place even if the order changed since (a new day_plan in the evening).
+  // 2. The morning list: due cards, sorted, under the cap. Cards ticked off in
+  // today's list keep their place even if the order changed since (a new day_plan
+  // in the evening). Cards done as extra practice are not asked again and leave
+  // their place to the next ones.
   sortDue(dueCards);
-  const dueDone = dueCards.filter((r) => done.has(r.card.id));
-  const duePending = dueCards.filter((r) => !done.has(r.card.id));
-  const dueTaken = new Set(
-    [...dueDone, ...duePending.slice(0, Math.max(0, base.cap - dueDone.length))].map((r) => r.card.id),
-  );
-  const rolledOver = dueCards.length - dueTaken.size;
+  const dueKept = dueCards.filter((r) => inList.has(r.card.id));
+  const dueOpen = dueCards.filter((r) => !done.has(r.card.id));
+  const dueFill = dueOpen.slice(0, Math.max(0, base.cap - dueKept.length));
+  const dueTaken = new Set([...dueKept, ...dueFill].map((r) => r.card.id));
+  const rolledOver = dueOpen.length - dueFill.length;
 
-  // 4. New cards.
+  // 3. The evening list: new cards.
   const chapterSort = new Map(input.chapters.map((c) => [c.id, c.sort]));
   const near = new Map(newCards.map((r) => [r.card.id, nearestExamDays(r.card, input.exams, today)]));
-  newCards.sort((a, b) => {
-    // A new card he got wrong in a quiz (due set, box 0) goes first: the quiz
-    // just showed it is needed.
-    const qa = a.state.due !== null && a.state.due <= today ? 0 : 1;
-    const qb = b.state.due !== null && b.state.due <= today ? 0 : 1;
-    return (
-      qa - qb ||
-      near.get(a.card.id)! - near.get(b.card.id)! ||
-      a.rank - b.rank ||
-      instant(a.card.created_at) - instant(b.card.created_at) ||
-      (chapterSort.get(a.card.chapter_id) ?? 0) - (chapterSort.get(b.card.chapter_id) ?? 0) ||
-      // Cards written together (one session) share created_at: keep the order
-      // they were written in. Split cards carry consecutive sort numbers, so
-      // a split card's parts stay together and in their own order.
-      a.card.sort - b.card.sort ||
-      (a.card.sibling_group ?? '').localeCompare(b.card.sibling_group ?? '') ||
-      a.card.id.localeCompare(b.card.id)
+  // A new card he got wrong in a quiz (due set, box 0): the quiz just showed it is needed.
+  const flagged = (r: Ranked) => r.state.due !== null && r.state.due <= today;
+  // Within a course: the most recent study first, imported cards last; cards
+  // written together keep the order they were written in, and split cards carry
+  // consecutive sort numbers, so a split card's parts stay together, in order.
+  const byStudy = (a: Ranked, b: Ranked) =>
+    (studied.get(b.card.id) ?? '').localeCompare(studied.get(a.card.id) ?? '') ||
+    instant(a.card.created_at) - instant(b.card.created_at) ||
+    (chapterSort.get(a.card.chapter_id) ?? 0) - (chapterSort.get(b.card.chapter_id) ?? 0) ||
+    a.card.sort - b.card.sort ||
+    (a.card.sibling_group ?? '').localeCompare(b.card.sibling_group ?? '') ||
+    a.card.id.localeCompare(b.card.id);
+
+  // 3a. Everything from today's and yesterday's lessons and self-studies, always.
+  const fixed = newCards.filter((r) => fresh(r.card.id)).sort((a, b) => a.rank - b.rank || byStudy(a, b));
+
+  // 3b. Then up to new_max in all: quiz-flagged and near-test cards in front, then
+  // the courses the day plan names, taking turns ("eerst BR en OR"), then the rest.
+  const pool = newCards
+    .filter((r) => !fresh(r.card.id))
+    .sort(
+      (a, b) =>
+        (flagged(a) ? 0 : 1) - (flagged(b) ? 0 : 1) ||
+        near.get(a.card.id)! - near.get(b.card.id)! ||
+        a.rank - b.rank ||
+        byStudy(a, b),
     );
-  });
-  // Spread fresh cards over the courses the day plan names first ("eerst IFHT en FB"):
-  // they take turns, so each gets new cards, before the other courses. Cards a quiz
-  // flagged and cards of a near test keep their place in front.
   if (base.planOrder.length >= 2) {
-    const front = newCards.filter((r) => (r.state.due !== null && r.state.due <= today) || Number.isFinite(near.get(r.card.id)!));
-    const rest = newCards.filter((r) => !front.includes(r));
+    const front = pool.filter((r) => flagged(r) || Number.isFinite(near.get(r.card.id)!));
+    const rest = pool.filter((r) => !front.includes(r));
     const lanes = base.planOrder.map((c) => rest.filter((r) => r.card.course_id === c));
-    const mixed: typeof newCards = [];
+    const mixed: Ranked[] = [];
     for (let i = 0; lanes.some((l) => i < l.length); i++) for (const l of lanes) if (i < l.length) mixed.push(l[i]);
     const others = rest.filter((r) => !base.planOrder.includes(r.card.course_id));
-    newCards.splice(0, newCards.length, ...front, ...mixed, ...others);
+    pool.splice(0, pool.length, ...front, ...mixed, ...others);
   }
-  const newDone = newCards.filter((r) => done.has(r.card.id));
-  const newPending = newCards.filter((r) => !done.has(r.card.id));
-  const newSlots = Math.max(0, Math.min(base.newMax, base.cap + base.newMax - dueTaken.size));
-  const newTaken = [...newDone, ...newPending.slice(0, Math.max(0, newSlots - newDone.length))];
+  // Ticked off in today's list: keeps its place, but only a card the plan asks
+  // for, so a stray answer can never eat the places of the planned courses.
+  const planned = (r: Ranked) =>
+    base.planOrder.length === 0 || base.planOrder.includes(r.card.course_id) || flagged(r) || Number.isFinite(near.get(r.card.id)!);
+  const slots = Math.max(0, base.newMax - fixed.length);
+  const newKept = pool.filter((r) => inList.has(r.card.id) && planned(r));
+  const newFill = pool.filter((r) => !done.has(r.card.id)).slice(0, Math.max(0, slots - newKept.length));
+  const newTaken = [...newKept, ...newFill];
   const newPick = new Map(newTaken.map((r, i) => [r.card.id, i]));
 
-  // Final order: per course, its due cards, then its new cards.
+  // Final order: the evening list (today's study per course, then the others per
+  // course), then the morning list (per course).
   const items: QueueItem[] = [];
-  for (let rank = 0; rank <= order.length; rank++) {
-    for (const r of dueCards) {
-      if (r.rank === rank && dueTaken.has(r.card.id)) {
-        items.push({ card: r.card, state: r.state, kind: 'review', done: done.has(r.card.id) });
-      }
-    }
-    for (const r of newTaken.filter((x) => x.rank === rank).sort((a, b) => newPick.get(a.card.id)! - newPick.get(b.card.id)!)) {
-      items.push({ card: r.card, state: r.state, kind: 'new', done: done.has(r.card.id) });
-    }
-  }
+  const add = (r: Ranked, kind: QueueItem['kind']) => items.push({ card: r.card, state: r.state, kind, done: done.has(r.card.id) });
+  for (const r of fixed) add(r, 'new');
+  for (const r of [...newTaken].sort((a, b) => a.rank - b.rank || newPick.get(a.card.id)! - newPick.get(b.card.id)!)) add(r, 'new');
+  for (const r of dueCards) if (dueTaken.has(r.card.id)) add(r, 'review');
 
   const remaining = items.filter((i) => !i.done);
   const owed = owedRepeats(input.reviews, today);
@@ -343,14 +405,25 @@ export function buildQueue(input: QueueInput): TodayQueue {
     .filter((i) => owed.has(i.card.id))
     .map((item) => ({ item, attempt: owed.get(item.card.id)! }));
   const timing = personalTiming(input.reviews, today, defaults);
-  const chipsFrom = remaining.length > 0 ? remaining : items;
-  const courseChips: string[] = [];
-  for (const i of chipsFrom) if (!courseChips.includes(i.card.course_id)) courseChips.push(i.card.course_id);
+  const part = (kind: QueueItem['kind']): QueuePart => {
+    const its = items.filter((i) => i.kind === kind);
+    const rem = its.filter((i) => !i.done);
+    return {
+      items: its,
+      remaining: rem,
+      repeats: repeats.filter((r) => r.item.kind === kind),
+      doneCount: its.length - rem.length,
+      progress: its.length === 0 ? 1 : (its.length - rem.length) / its.length,
+      remainingSec: estimateSeconds(rem, timing),
+      courseChips: chipsOf(rem.length > 0 ? rem : its),
+    };
+  };
 
   return {
     day: today,
     plan: { day: today, cap: base.cap, newMax: base.newMax, courseOrder: order, reason: base.reason, fromPlan: base.fromPlan },
     items,
+    parts: { review: part('review'), new: part('new') },
     remaining,
     repeats,
     total: items.length,
@@ -360,8 +433,15 @@ export function buildQueue(input: QueueInput): TodayQueue {
     timing,
     remainingSec: estimateSeconds(remaining, timing),
     totalSec: estimateSeconds(items, timing),
-    courseChips,
+    courseChips: chipsOf(remaining.length > 0 ? remaining : items),
   };
+}
+
+/** Courses with cards in a list, in the list's order (the chips on a Home card). */
+function chipsOf(list: readonly QueueItem[]): string[] {
+  const out: string[] = [];
+  for (const i of list) if (!out.includes(i.card.course_id)) out.push(i.card.course_id);
+  return out;
 }
 
 /** How many cards one "Overhoor dit hoofdstuk / vak" round holds. */
@@ -487,7 +567,7 @@ export function personalTiming(reviews: readonly Review[], today: string, defaul
   const fallback: Timing = { reviewSec: defaults.est_sec_review, newSec: defaults.est_sec_new, source: 'default' };
   const undone = undoneIds(reviews);
   const rows = reviews
-    .filter((r) => r.mode === 'sessie' && r.result !== 'undo' && !undone.has(r.id))
+    .filter((r) => (r.mode === 'sessie' || r.mode === 'extra') && r.result !== 'undo' && !undone.has(r.id))
     .sort(compareRows);
   if (rows.length === 0 || daysBetween(rows[0].day, today) < 14) return fallback;
 

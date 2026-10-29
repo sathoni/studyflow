@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS, type Card, type Review } from './model.ts';
+import { DEFAULTS, type Card, type Review, type StudySession } from './model.ts';
 import {
   ReviewSession,
   buildQueue,
@@ -18,12 +18,13 @@ import {
   owedRepeats,
   personalTiming,
   planFor,
+  sessionDay,
   studyRound,
   tomorrowQueue,
   type QueueInput,
   type QueueItem,
 } from './queue.ts';
-import { COURSES, card, chapter, exam, inBox, plan, review } from './testkit.ts';
+import { COURSES, T0, card, chapter, exam, inBox, plan, review } from './testkit.ts';
 import { addDays } from './dates.ts';
 
 const TODAY = '2026-10-26'; // a Monday
@@ -394,4 +395,112 @@ test('study round: due first, then new in chapter order, then early ones; answer
   const small = studyRound(input([due, early, fresh2, fresh1], reviews), { kind: 'vak', id: 'SCM' }, 2);
   assert.deepEqual(ids(small.items), ['due', 'new-1']);
   assert.equal(small.left, 2, 'the next round carries on');
+});
+
+/* ---- two lists a day: 🌅 herhaling at 7:00, 🌙 new cards in the evening (29/10) ---- */
+
+function sessionOf(key: string, cardIds: string[], kind: StudySession['kind'] = 'zelfstudie'): StudySession {
+  const chapterId = key.split(':')[0];
+  return {
+    id: `s-${key}`, session_key: key, course_id: chapterId.split('-')[0], chapter_id: chapterId,
+    kind, title: key, card_ids: cardIds, created_at: T0, updated_at: T0,
+  };
+}
+
+test('sessionDay: the study day of a lesson or self-study key; none for imports', () => {
+  assert.equal(sessionDay({ session_key: 'BR-D2:2026-10-29:1-17', kind: 'zelfstudie' }), '2026-10-29');
+  assert.equal(sessionDay({ session_key: 'SCM-H1:migratie:1', kind: 'import' }), null);
+  assert.equal(sessionDay({ session_key: 'OR-S1:inhaal', kind: 'les' }), null);
+});
+
+test('the day in two lists: the evening\'s new cards first in the day, then the morning\'s', () => {
+  const due = card('SCM-H3', { id: 'due-1' });
+  const fresh = card('FB-H1', { id: 'new-1' });
+  const q = buildQueue(input([due, fresh], inBox('due-1', 2, TODAY)));
+  assert.deepEqual(ids(q.parts.review.items), ['due-1']);
+  assert.deepEqual(ids(q.parts.new.items), ['new-1']);
+  assert.deepEqual(ids(q.items), ['new-1', 'due-1']);
+  assert.deepEqual([q.parts.review.progress, q.parts.new.courseChips], [0, ['FB']]);
+});
+
+test('evening list: today\'s and yesterday\'s study always and first, then the rest up to new_max', () => {
+  const t1 = card('FB-H1', { id: 'today-1' });
+  const t2 = card('FB-H1', { id: 'today-2' });
+  const y1 = card('FB-H1', { id: 'yest-1' });
+  const old1 = card('FB-H1', { id: 'old-1' });
+  const imp = card('FB-H1', { id: 'import-1' });
+  const sessions = [
+    sessionOf(`FB-H1:${TODAY}:p10`, ['today-1', 'today-2']),
+    sessionOf(`FB-H1:${addDays(TODAY, -1)}:p8`, ['yest-1']),
+    sessionOf(`FB-H1:${addDays(TODAY, -4)}:p5`, ['old-1']),
+    sessionOf('FB-H1:migratie', ['import-1'], 'import'),
+  ];
+  const all = [imp, old1, y1, t2, t1];
+  const two = buildQueue(input(all, [], { sessions, dayPlans: [plan(TODAY, [], { new_max: 2 })] }));
+  assert.deepEqual(ids(two.items), ['today-1', 'today-2', 'yest-1'], 'today and yesterday always, even past new_max');
+  const five = buildQueue(input(all, [], { sessions, dayPlans: [plan(TODAY, [], { new_max: 5 })] }));
+  assert.deepEqual(ids(five.items), ['today-1', 'today-2', 'yest-1', 'old-1', 'import-1'], 'then the most recent study, imports last');
+  assert.ok(five.items.every((i) => i.kind === 'new'));
+});
+
+test('29/10: SCM done as extra practice never eats the places of the planned BR and OR cards', () => {
+  const brToday = Array.from({ length: 3 }, (_, i) => card('BR-D2', { id: `br-today-${i}` }));
+  const orToday = Array.from({ length: 3 }, (_, i) => card('OR-S2', { id: `or-today-${i}` }));
+  const brOld = Array.from({ length: 6 }, (_, i) => card('BR-D1', { id: `br-old-${i}` }));
+  const orOld = Array.from({ length: 6 }, (_, i) => card('OR-S1', { id: `or-old-${i}` }));
+  const scm = Array.from({ length: 12 }, (_, i) => card('SCM-H1', { id: `scm-${String(i).padStart(2, '0')}` }));
+  const sessions = [
+    sessionOf(`BR-D2:${TODAY}:1-17`, brToday.map((c) => c.id)),
+    sessionOf(`OR-S2:${TODAY}:1-28`, orToday.map((c) => c.id)),
+  ];
+  // The old app logged those rounds as 'sessie'; from now on they are 'extra'.
+  for (const mode of ['sessie', 'extra'] as const) {
+    const rows = scm.map((c) => review(c.id, TODAY, 'gekend', { mode }));
+    const q = buildQueue(
+      input([...brToday, ...orToday, ...brOld, ...orOld, ...scm], rows, {
+        sessions,
+        dayPlans: [plan(TODAY, ['BR', 'OR'], { new_max: 10 })],
+      }),
+    );
+    assert.deepEqual(
+      ids(q.parts.new.items),
+      ['br-today-0', 'br-today-1', 'br-today-2', 'or-today-0', 'or-today-1', 'or-today-2', 'br-old-0', 'br-old-1', 'or-old-0', 'or-old-1'],
+      mode,
+    );
+    assert.equal(q.parts.new.doneCount, 0, `${mode}: nothing of the evening list is done yet`);
+  }
+});
+
+test('due cards done as extra practice leave their place to the next; ticked-off list cards keep theirs', () => {
+  const cards = Array.from({ length: 6 }, (_, i) => card('SCM-H3', { id: `d-${i}` }));
+  const before = cards.flatMap((c) => inBox(c.id, 2, TODAY));
+  const p = [plan(TODAY, [], { cap: 3 })];
+  assert.deepEqual(ids(buildQueue(input(cards, before, { dayPlans: p })).parts.review.items), ['d-0', 'd-1', 'd-2']);
+  const rows = [...before, review('d-0', TODAY, 'gekend'), review('d-1', TODAY, 'gekend', { mode: 'extra' })];
+  const q = buildQueue(input(cards, rows, { dayPlans: p }));
+  assert.deepEqual(ids(q.parts.review.items), ['d-0', 'd-2', 'd-3']);
+  assert.deepEqual(ids(q.parts.review.remaining), ['d-2', 'd-3']);
+  assert.equal(q.rolledOver, 2, 'd-4 and d-5 wait; d-1 is done');
+});
+
+test('a card of today\'s study done as extra practice is ticked off, not asked again', () => {
+  const a = card('FB-H1', { id: 'fresh-a' });
+  const b = card('FB-H1', { id: 'fresh-b' });
+  const sessions = [sessionOf(`FB-H1:${TODAY}:p1`, ['fresh-a', 'fresh-b'])];
+  const q = buildQueue(input([a, b], [review('fresh-a', TODAY, 'gekend', { mode: 'extra' })], { sessions }));
+  assert.deepEqual(ids(q.parts.new.items), ['fresh-a', 'fresh-b']);
+  assert.deepEqual(ids(q.parts.new.remaining), ['fresh-b']);
+});
+
+test('owed repeats: a right answer as extra practice settles a fail; a fail as extra owes nothing', () => {
+  assert.equal(owedRepeats([review('x', TODAY, 'niet'), review('x', TODAY, 'gekend', { mode: 'extra' })], TODAY).has('x'), false);
+  assert.equal(owedRepeats([review('y', TODAY, 'niet', { mode: 'extra' })], TODAY).has('y'), false);
+});
+
+test('yesterday\'s study not reviewed yet comes back first the next evening', () => {
+  const c = card('BR-D2', { id: 'thu-card' });
+  const other = card('SCM-H3', { id: 'scm-new' });
+  const sessions = [sessionOf(`BR-D2:${addDays(TODAY, -1)}:1-17`, ['thu-card'])];
+  const q = buildQueue(input([other, c], [], { sessions, dayPlans: [plan(TODAY, ['SCM'], { new_max: 1 })] }));
+  assert.deepEqual(ids(q.parts.new.items), ['thu-card'], 'even when the plan names other courses');
 });

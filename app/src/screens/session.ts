@@ -30,17 +30,17 @@ import {
   cardsLabel,
   extraRound,
   forCourse,
-  minutesLabel,
   studyRound,
   type StudyScope,
   type QueueItem,
+  type QueuePart,
   type RepeatItem,
 } from '../lib/queue.ts';
 import { type Box, type CardState, boxCounts, boxLabel, foldAll, hintButtonLabel, previewButtons } from '../lib/leitner.ts';
 import { courseQuizList, homeQuizSuggestion } from '../lib/quiz.ts';
 import { addDays } from '../lib/dates.ts';
 import type { ModeHandle, PageEnv } from './shell.ts';
-import { openCardMenu } from './common.ts';
+import { openCardMenu, tomorrowLine as tomorrowText } from './common.ts';
 import { openCardPreview } from './preview.ts';
 
 const SWIPE_COMMIT = 96;
@@ -50,13 +50,19 @@ const UNDO_MS = 6500;
 
 export function sessionMode(env: PageEnv): ModeHandle {
   const { ctx, s, d, params } = env;
+  // sessie/herhaling and sessie/nieuw: the morning and the evening list.
   // sessie/hoofdstuk/<id>/<round> or sessie/vak/<id>/<round>: a round with the boxes
-  // over one chapter or course, at any moment. sessie/<course>[/extra]: today's list.
+  // over one chapter or course, at any moment. sessie/<course>: today's lists for one
+  // course; sessie/<course>/extra: one more round of it.
   const study: StudyScope | null =
     params[0] === 'hoofdstuk' || params[0] === 'vak' ? { kind: params[0], id: params[1] ?? '' } : null;
+  const list = params[0] === 'herhaling' ? 'review' : params[0] === 'nieuw' ? 'new' : null;
   const round = Number(params[2] ?? '1') || 1;
-  const courseId = study ? null : (params[0] ?? null);
+  const courseId = study || list ? null : (params[0] ?? null);
   const extra = !study && params[1] === 'extra';
+  // Rounds outside today's lists are extra practice: logged as 'extra', so they
+  // never take a place in today's lists (his wish, 29/10).
+  const practice = study !== null || extra;
   const waits = s.defaults.wait_days;
 
   let items: QueueItem[];
@@ -64,6 +70,9 @@ export function sessionMode(env: PageEnv): ModeHandle {
   if (study) {
     items = studyRound(queueInput(s), study).items;
     repeats = [];
+  } else if (list) {
+    items = d.queue.parts[list].remaining;
+    repeats = d.queue.parts[list].repeats;
   } else if (!courseId) {
     items = d.queue.remaining;
     repeats = d.queue.repeats;
@@ -123,7 +132,9 @@ export function sessionMode(env: PageEnv): ModeHandle {
       );
       counter.textContent = `${Math.min(pos.done + 1, pos.total)} / ${pos.total}`;
     } else {
-      title.replaceChildren(h('span', { class: 'mode-title-text', text: 'Vandaag overhoren' }));
+      title.replaceChildren(
+        h('span', { class: 'mode-title-text', text: list === 'review' ? 'Herhaling' : list === 'new' ? 'Nieuwe kaartjes' : practice ? 'Extra oefenen' : 'Vandaag overhoren' }),
+      );
       counter.textContent = `${pos.total} / ${pos.total}`;
     }
     progress.style.width = `${pos.total === 0 ? 100 : Math.round((pos.done / pos.total) * 100)}%`;
@@ -329,7 +340,8 @@ export function sessionMode(env: PageEnv): ModeHandle {
     const preview = previewButtons({ box: before }, used, s.today, waits);
     buzz(answer === 'gekend' ? 8 : 16);
     try {
-      const row = await ctx.actions.rate(card.id, answer, step.mode, used, Math.round(performance.now() - shownAt));
+      const mode = step.mode === 'sessie' && practice ? 'extra' : step.mode;
+      const row = await ctx.actions.rate(card.id, answer, mode, used, Math.round(performance.now() - shownAt));
       reviews.push(row);
       states = foldAll(ids, reviews, { waits });
       session.answer(answer === 'gekend' && used > 0 ? 'hint' : answer);
@@ -452,6 +464,9 @@ export function sessionMode(env: PageEnv): ModeHandle {
     const sum = session.summary();
     const after = buildQueue({ ...queueInput(s), reviews });
     const allDone = after.remaining.length === 0 && after.repeats.length === 0;
+    const leftIn = (p: QueuePart) => p.remaining.length + p.repeats.length;
+    const mineLeft = list ? leftIn(after.parts[list]) : after.remaining.length + after.repeats.length;
+    const otherLeft = list === 'new' ? leftIn(after.parts.review) : list === 'review' ? leftIn(after.parts.new) : 0;
     const minutes = Math.max(1, Math.round((Date.now() - startedAt) / 60000));
     const pct = sum.firstTryShare === null ? null : Math.round(sum.firstTryShare * 100);
 
@@ -500,7 +515,11 @@ export function sessionMode(env: PageEnv): ModeHandle {
                 ? 'Alles voor vandaag is al gedaan.'
                 : allDone
                   ? 'Alles voor vandaag is gedaan. Tot morgen!'
-                  : `Nog ${cardsLabel(after.remaining.length + after.repeats.length)} voor vandaag.`,
+                  : list === 'new' && mineLeft === 0
+                    ? `Je nieuwe kaartjes zijn klaar. Nog ${cardsLabel(otherLeft)} in je herhaling van vandaag.`
+                    : list === 'review' && mineLeft === 0
+                      ? `Je herhaling is klaar. Vanavond: ${otherLeft === 1 ? '1 nieuw kaartje' : `${otherLeft} nieuwe kaartjes`}.`
+                      : `Nog ${cardsLabel(mineLeft)} voor vandaag.`,
             }),
         nothing
           ? null
@@ -555,8 +574,7 @@ export function sessionMode(env: PageEnv): ModeHandle {
   }
 
   function tomorrowLine(): string {
-    const t = buildQueue({ ...queueInput(s), reviews, today: addDays(s.today, 1) });
-    return t.total > 0 ? `Morgen ${minutesLabel(t.totalSec)} · ${cardsLabel(t.total)}` : 'Morgen niets gepland.';
+    return tomorrowText(buildQueue({ ...queueInput(s), reviews, today: addDays(s.today, 1) }));
   }
 
   /* ---------------- keys ---------------- */

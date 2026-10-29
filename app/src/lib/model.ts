@@ -228,7 +228,8 @@ export interface PipelineStatus {
  * ------------------------------------------------------------------ */
 
 export type ReviewResult = 'gekend' | 'hint' | 'niet' | 'opnieuw' | 'quiz_fout' | 'undo';
-export type ReviewMode = 'sessie' | 'herhaling' | 'handmatig' | 'quiz';
+/** 'sessie' = today's lists, 'extra' = extra practice (a chapter or course round): same box rules. */
+export type ReviewMode = 'sessie' | 'herhaling' | 'handmatig' | 'quiz' | 'extra';
 
 export interface Review {
   id: Uuid;

@@ -18,13 +18,13 @@ import type { RunScore } from './quiz.ts';
  * ------------------------------------------------------------------ */
 
 /**
- * Answers given in a review session (first pass or herhaling), minus the ones
- * he undid. Manual "Opnieuw leren" and quiz rows are not studying cards.
+ * Answers given in a review session (first pass, herhaling or extra practice),
+ * minus the ones he undid. Manual "Opnieuw leren" and quiz rows are not studying cards.
  */
 export function sessionRows(reviews: readonly Review[]): Review[] {
   const undone = undoneIds(reviews);
   return reviews.filter(
-    (r) => (r.mode === 'sessie' || r.mode === 'herhaling') && r.result !== 'undo' && !undone.has(r.id),
+    (r) => (r.mode === 'sessie' || r.mode === 'herhaling' || r.mode === 'extra') && r.result !== 'undo' && !undone.has(r.id),
   );
 }
 
@@ -107,7 +107,7 @@ export function firstTryShare(reviews: readonly Review[], today: Day, days = 14)
   let right = 0;
   let all = 0;
   for (const r of sessionRows(reviews)) {
-    if (r.mode !== 'sessie' || r.day < since || r.day > today) continue;
+    if (r.mode === 'herhaling' || r.day < since || r.day > today) continue;
     all++;
     if (r.result === 'gekend' || r.result === 'hint') right++;
   }
