@@ -41,7 +41,7 @@ import { type Box, type CardState, boxCounts, boxLabel, foldAll, hintButtonLabel
 import { courseQuizList, homeQuizSuggestion } from '../lib/quiz.ts';
 import { addDays } from '../lib/dates.ts';
 import type { ModeHandle, PageEnv } from './shell.ts';
-import { openCardMenu, tomorrowLine as tomorrowText } from './common.ts';
+import { openCardMenu, tomorrowLine as tomorrowText, proofBlock } from './common.ts';
 import { openCardPreview } from './preview.ts';
 
 const SWIPE_COMMIT = 96;
@@ -208,6 +208,7 @@ export function sessionMode(env: PageEnv): ModeHandle {
       h('p', { class: 'rv-core' }, ...rich(card.answer.core)),
       visualFrame(card.answer.visual, visEnv),
       h('div', { class: 'rv-meta' }, chip(card.source.label, 'chip-source')),
+      proofBlock(card),
       more,
       h('p', { class: 'rv-tap rv-tap-back', text: 'Tik om alleen de vraag te zien' }),
     );

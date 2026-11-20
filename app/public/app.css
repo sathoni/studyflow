@@ -991,6 +991,8 @@ html.in-mode.mode-end .toast { bottom: calc(var(--safe-bottom) + 94px); }
 .feedback-expected strong { color: var(--text); }
 .feedback-steps { margin: 6px 0 0; padding-left: 20px; font-size: 14px; color: var(--text-2); }
 .feedback-tip { font-size: 12.5px !important; color: var(--muted) !important; }
+.feedback-self { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line, rgba(0,0,0,0.08)); display: grid; gap: 8px; justify-items: start; }
+.feedback-self .feedback-tip { margin: 0 !important; }
 .feedback-meta { margin-top: 10px; }
 .feedback .chip-source { background: var(--surface); }
 
@@ -1194,3 +1196,8 @@ html.in-mode.mode-end .toast { bottom: calc(var(--safe-bottom) + 94px); }
   .pv-card.flipped .pv-back { visibility: visible; }
   .pv-card.flipped .pv-front { visibility: hidden; }
 }
+
+/* The proof passage of a card (20/11) */
+.rv-quote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--line); font-size: 14px; color: var(--text-2); text-align: left; white-space: pre-line; }
+.rv-proof-tag { margin: 6px 0 0 !important; font-size: 12.5px !important; color: var(--muted) !important; text-align: left; }
+.rv-proof-tag.checked { color: var(--good-text) !important; }

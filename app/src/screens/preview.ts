@@ -13,7 +13,7 @@ import type { Box } from '../lib/leitner.ts';
 import { relativeDay } from '../lib/dates.ts';
 import type { PageEnv } from './shell.ts';
 import { chapterCode } from './derive.ts';
-import { openCardMenu } from './common.ts';
+import { openCardMenu, proofBlock } from './common.ts';
 
 export function openCardPreview(env: Pick<PageEnv, 'ctx' | 's' | 'd'>, card: Card, onChanged?: () => void): void {
   const { ctx, s, d } = env;
@@ -58,6 +58,7 @@ export function openCardPreview(env: Pick<PageEnv, 'ctx' | 's' | 'd'>, card: Car
     visualFrame(card.answer.visual, visEnv),
     card.answer.more ? h('p', { class: 'pv-more' }, ...rich(card.answer.more)) : null,
     h('div', { class: 'pv-meta' }, chip(card.source.label, 'chip-source')),
+    proofBlock(card),
   );
   const flipper = h(
     'div',

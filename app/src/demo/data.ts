@@ -225,7 +225,9 @@ export function buildDemo(now: Date = new Date()): DemoTables {
       front: { text: spec.q, visual: null },
       answer: { core: spec.a, more: spec.more ?? null, visual },
       hints: HINTS(spec.a),
-      source: { label, slide: spec.vis?.[0] ?? null },
+      source: i % 3 === 0
+        ? { label, slide: spec.vis?.[0] ?? null, quote: `Voorbeeldzin uit de dia die dit antwoord bewijst (demo, kaartje ${i + 1}).`, quote_ok: i % 2 === 0 }
+        : { label, slide: spec.vis?.[0] ?? null },
       exam_value: spec.type === 'rekenen' || spec.type === 'formule' ? 3 : 2,
       sibling_group: null, sort, legacy_notion_id: null, notion_inbox_id: null,
       status: 'live', version: 1,

@@ -185,3 +185,74 @@ test('flag, star and instrument score are saved locally and queued', async () =>
   assert.equal(after.instrumentReviews.length, s.instrumentReviews.length + 1);
   assert.equal(await store.pendingCount(), 3);
 });
+
+test('a typed fill-in graded wrong is held: "Ik bedoelde hetzelfde" counts it right and sends nothing back', async () => {
+  const store = await demoStore();
+  const actions = new Actions(store, { now: () => NOW });
+  const s = await loadSnapshot(store, NOW);
+  // Find a run with a fill-in question (the order depends on the seed).
+  let run = buildRun({ kind: 'sessie', id: s.quizzes[0].id }, quizData(s), { rng: seeded(3) })!;
+  for (let seed = 4; !run.questions.some((x) => x.format === 'cloze') && seed < 40; seed++) {
+    run = buildRun({ kind: 'sessie', id: s.quizzes[0].id }, quizData(s), { rng: seeded(seed) })!;
+  }
+  const q = run.questions.find((x) => x.format === 'cloze')!;
+  assert.ok(q, 'the demo quiz has a fill-in question');
+  const typed = { text: 'iets met dezelfde betekenis' };
+  const first = actions.gradeQuiz(q, typed);
+  assert.equal(first.correct, false);
+  assert.equal(actions.holdsForHim(q, typed, first), true);
+  // Grading alone writes nothing.
+  let after = await loadSnapshot(store, NOW);
+  assert.equal((await store.all('quiz_attempts')).filter((a) => a.run_id === run.run_id).length, 0);
+  assert.equal(after.reviews.filter((r) => r.result === 'quiz_fout').length, 0);
+
+  const { grade, attempt } = await actions.settleQuiz(run, q, typed, first, false, true);
+  assert.equal(grade.correct, true);
+  assert.equal(attempt.correct, true);
+  assert.deepEqual(attempt.answer, { text: 'iets met dezelfde betekenis', self: true });
+  after = await loadSnapshot(store, NOW);
+  assert.equal(after.reviews.filter((r) => r.result === 'quiz_fout').length, 0, 'the card does not come back');
+  const result = await actions.finishQuiz(run, new Map([[q.n, grade]]));
+  assert.deepEqual(result.backTomorrow, []);
+});
+
+test('a held fill-in he does not claim is logged wrong and comes back; other answers are never held', async () => {
+  const store = await demoStore();
+  const actions = new Actions(store, { now: () => NOW });
+  const s = await loadSnapshot(store, NOW);
+  let run = buildRun({ kind: 'sessie', id: s.quizzes[0].id }, quizData(s), { rng: seeded(3) })!;
+  for (let seed = 4; !run.questions.some((x) => x.format === 'cloze') && seed < 40; seed++) {
+    run = buildRun({ kind: 'sessie', id: s.quizzes[0].id }, quizData(s), { rng: seeded(seed) })!;
+  }
+  const q = run.questions.find((x) => x.format === 'cloze')!;
+  const typed = { text: 'zzz' };
+  const first = actions.gradeQuiz(q, typed);
+  const { grade, attempt } = await actions.settleQuiz(run, q, typed, first);
+  assert.equal(grade.correct, false);
+  assert.deepEqual(attempt.answer, { text: 'zzz' });
+  const after = await loadSnapshot(store, NOW);
+  assert.equal(after.reviews.filter((r) => r.result === 'quiz_fout' && r.card_id === q.item.card_id).length, 1);
+
+  // A right fill-in, an empty one, a multiple choice and a calculation are graded by the app alone.
+  const accept = (q.item.answer as { accept: string[] }).accept[0];
+  assert.equal(actions.holdsForHim(q, { text: accept }, actions.gradeQuiz(q, { text: accept })), false);
+  assert.equal(actions.holdsForHim(q, { text: '  ' }, actions.gradeQuiz(q, { text: '  ' })), false);
+  const mcq = run.questions.find((x) => x.options)!;
+  const wrong = { option: mcq.options!.findIndex((o) => !o.correct) };
+  assert.equal(actions.holdsForHim(mcq, wrong, actions.gradeQuiz(mcq, wrong)), false);
+  const num = run.questions.find((x) => x.format === 'numeric');
+  if (num) assert.equal(actions.holdsForHim(num, { text: '1' }, actions.gradeQuiz(num, { text: '1' })), false);
+});
+
+test('the proof passage of a card: checked, from his notes, not checked yet, or none', async () => {
+  const { sourceProof } = await import('./model.ts');
+  assert.equal(sourceProof({ label: 'SCM H3 · dia 119' }), null);
+  assert.equal(sourceProof({ label: 'x', quote: '   ' }), null);
+  assert.deepEqual(sourceProof({ label: 'x', quote: ' Op basis van marktonderzoek ', quote_ok: true }), {
+    quote: 'Op basis van marktonderzoek', status: 'checked', label: 'Staat letterlijk in je cursus',
+  });
+  assert.equal(sourceProof({ label: 'x', quote: 'De prof zei het', quote_ok: false, quote_from: 'notities' })!.status, 'notes');
+  assert.equal(sourceProof({ label: 'x', quote: 'Nog geen diatekst', quote_ok: false })!.status, 'unchecked');
+  // quote_ok wins: only the database sets it.
+  assert.equal(sourceProof({ label: 'x', quote: 'q', quote_ok: true, quote_from: 'notities' })!.status, 'checked');
+});

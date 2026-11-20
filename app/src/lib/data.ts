@@ -248,13 +248,44 @@ export class Actions {
     answer: QuizAnswer,
     hintUsed = false,
   ): Promise<{ grade: Grade; attempt: QuizAttempt }> {
-    const grade = gradeAnswer(question, answer);
+    return this.settleQuiz(run, question, answer, gradeAnswer(question, answer), hintUsed);
+  }
+
+  /**
+   * A typed fill-in answer the app calls wrong is held for a moment: he sees the
+   * right word and may say "Ik bedoelde hetzelfde" (20/11: good synonyms such as
+   * "naast" for "langszij" were refused, and a refused answer sends the card
+   * back). Nothing is written until settleQuiz.
+   */
+  holdsForHim(question: QuizQuestion, answer: QuizAnswer, grade: Grade): boolean {
+    return !grade.correct && question.item.format === 'cloze' && 'text' in answer && answer.text.trim() !== '';
+  }
+
+  /** Grade without writing (see holdsForHim). */
+  gradeQuiz(question: QuizQuestion, answer: QuizAnswer): Grade {
+    return gradeAnswer(question, answer);
+  }
+
+  /**
+   * Log one graded answer. `meantSame`: he judged his own typed answer right;
+   * the row says so (`answer.self`), so those can be counted and checked later.
+   */
+  async settleQuiz(
+    run: QuizRun,
+    question: QuizQuestion,
+    answer: QuizAnswer,
+    grade: Grade,
+    hintUsed = false,
+    meantSame = false,
+  ): Promise<{ grade: Grade; attempt: QuizAttempt }> {
+    const final: Grade = meantSame ? { ...grade, correct: true } : grade;
     const now = this.now();
-    const attempt = attemptRow(run, question, answer, grade, hintUsed, now);
+    const attempt = attemptRow(run, question, answer, final, hintUsed, now);
+    if (meantSame) attempt.answer = { ...(attempt.answer as object), self: true };
     await this.store.write('quiz_attempts', attempt);
-    if (!grade.correct) await this.sendBack(run.run_id, question.item.card_id, now);
+    if (!final.correct) await this.sendBack(run.run_id, question.item.card_id, now);
     this.hooks.onWrite?.();
-    return { grade, attempt };
+    return { grade: final, attempt };
   }
 
   /**

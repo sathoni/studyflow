@@ -115,6 +115,21 @@ export interface CardSource {
   label: string;
   slide?: string | null;
   page?: string | null;
+  /** The literal passage of the slide or page that proves the answer (since 20/11). */
+  quote?: string | null;
+  /** Set by the database only: true when the quote was found on that slide. */
+  quote_ok?: boolean | null;
+  /** 'notities' when the passage comes from his own notes (cannot be checked). */
+  quote_from?: string | null;
+}
+
+/** The proof passage of a card, with how far it was checked; null when the card has none. */
+export function sourceProof(source: CardSource): { quote: string; status: 'checked' | 'notes' | 'unchecked'; label: string } | null {
+  const quote = typeof source.quote === 'string' ? source.quote.trim() : '';
+  if (!quote) return null;
+  if (source.quote_ok === true) return { quote, status: 'checked', label: 'Staat letterlijk in je cursus' };
+  if (source.quote_from === 'notities') return { quote, status: 'notes', label: 'Uit je eigen notities' };
+  return { quote, status: 'unchecked', label: 'Nog niet nagekeken met de dia' };
 }
 
 export type CardType =

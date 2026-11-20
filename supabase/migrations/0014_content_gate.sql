@@ -1,0 +1,41 @@
+-- ===========================================================================
+-- 0014 · The content gate for new cards, and the proof passage (20/11)
+--
+-- Applied through the Supabase connector as two migrations, `content_check`
+-- and `add_session_content_gate`; their full text is in the project's
+-- migration history (supabase_migrations.schema_migrations) and can be read
+-- back with pg_get_functiondef. In short:
+--
+--   * extension pg_trgm (schema extensions), for near-duplicate questions.
+--   * public.sf_norm(text): lower case, letters and digits only.
+--   * public.sf_content_check(payload jsonb) -> {errors, warnings, quotes}.
+--     Only for kind 'les' and 'zelfstudie' (imports are left alone).
+--       errors:   more than 8 cards · front > 120 (casus 300) · core > 150 or not
+--                 exactly one **bold** span · more > 400 · a hint outside 10-160
+--                 or hint 1/2 holding the key term · a question that already
+--                 exists in the chapter (similarity >= 0.9) or twice in the call ·
+--                 source.quote outside 12-240 characters or not found in
+--                 slides.text of source.slide / source.page · a quiz stem that
+--                 names a slide number · quiz items on a needs_check card ·
+--                 a cloze with more than one blank or a blank of more than 4 words.
+--       warnings: no source.quote yet (older skill copies) · a quote that could
+--                 not be checked (no slide text stored) · key term in the
+--                 question · yes/no or list questions · a slide number in a
+--                 question · a close question (similarity >= 0.7) · an mcq whose
+--                 right option is much longer · a session with only recall cards.
+--   * public.sf_add_session(payload) is now a thin gate: it runs the check,
+--     raises the same "rejected the payload" message on errors, stamps
+--     source.quote_ok (true only when the quote was found on the slide; a value
+--     sent by the caller is overwritten or removed), calls
+--     public.sf_add_session_core(payload) (the function of 0006, renamed) and
+--     appends its warnings to the result.
+--
+-- Tested on 20/11 against the 30 real study sessions (217 cards): one error
+-- (a hint of 9 characters), so good cards pass; a literal quote with other
+-- line breaks is found, an invented one is refused, a write with a quote was
+-- stored with quote_ok = true and rolled back.
+-- ===========================================================================
+
+-- Also on 20/11, data only: 111 live quiz stems that named a slide number were
+-- reworded to name the concept instead (the old stems are kept in
+-- public._backup_quiz_stems_20261120).

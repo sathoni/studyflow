@@ -60,6 +60,8 @@ export function quizRunMode(env: PageEnv): ModeHandle {
   let hintUsed = false;
   let finished = false;
   let busy = false;
+  /** A typed fill-in answer graded wrong, not written yet (see settle). */
+  let held: { q: QuizQuestion; given: QuizAnswer; grade: Grade; hintUsed: boolean } | null = null;
 
   function start(): void {
     run =
@@ -67,6 +69,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     index = 0;
     grades = new Map();
     finished = false;
+    held = null;
     if (!run) return showNothing();
     const course = d.courses.get(run.course_id);
     const chapter = run.chapter_id ? d.chapters.get(run.chapter_id) : null;
@@ -210,23 +213,65 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     busy = true;
     answered = true;
     try {
-      const { grade } = await ctx.actions.answerQuiz(run, q, given, hintUsed);
+      // A typed fill-in the app calls wrong waits for his own verdict (settle()).
+      const first = ctx.actions.gradeQuiz(q, given);
+      if (ctx.actions.holdsForHim(q, given, first)) {
+        held = { q, given, grade: first, hintUsed };
+        grades.set(q.n, first);
+        buzz(18);
+        sounds.wrong();
+        showFeedback(q, first);
+        return;
+      }
+      const { grade } = await ctx.actions.settleQuiz(run, q, given, first, hintUsed);
       grades.set(q.n, grade);
       buzz(grade.correct ? 8 : 18);
       if (grade.correct) sounds.right();
       else sounds.wrong();
-      // Practising mistakes: a wrong card comes back at the end, in another wording.
-      if (run.scope.kind === 'fouten' && !grade.correct) {
-        const again = retryQuestion(run, q.item.card_id, d.qdata);
-        if (again) run.questions.push(again);
-      }
+      afterWrong(q, grade);
       showFeedback(q, grade);
     } finally {
       busy = false;
     }
   }
 
-  function showFeedback(q: QuizQuestion, grade: Grade): void {
+  /** Practising mistakes: a wrong card comes back at the end, in another wording. */
+  function afterWrong(q: QuizQuestion, grade: Grade): void {
+    if (run && run.scope.kind === 'fouten' && !grade.correct) {
+      const again = retryQuestion(run, q.item.card_id, d.qdata);
+      if (again) run.questions.push(again);
+    }
+  }
+
+  /** Write the held fill-in answer: as he judged it, or wrong when he just went on. */
+  async function settle(meantSame: boolean): Promise<Grade | null> {
+    const w = held;
+    if (!run || !w) return null;
+    held = null;
+    const { grade } = await ctx.actions.settleQuiz(run, w.q, w.given, w.grade, w.hintUsed, meantSame);
+    grades.set(w.q.n, grade);
+    afterWrong(w.q, grade);
+    return grade;
+  }
+
+  async function meantSame(q: QuizQuestion): Promise<void> {
+    if (!held || busy) return;
+    busy = true;
+    try {
+      const grade = await settle(true);
+      if (!grade) return;
+      buzz(8);
+      sounds.right();
+      body.querySelector('.feedback')?.remove();
+      const field = body.querySelector<HTMLInputElement>('.qz-field');
+      field?.classList.remove('wrong');
+      showFeedback(q, grade, true);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function showFeedback(q: QuizQuestion, grade: Grade, self = false): void {
     if (!run) return;
     updateCounter();
     // Mark the rows: the right one green, a wrong choice red, their "waarom" open.
@@ -250,8 +295,11 @@ export function quizRunMode(env: PageEnv): ModeHandle {
         'div',
         { class: 'feedback-head' },
         h('span', { class: 'feedback-icon', html: icon(grade.correct ? 'checkCircle' : 'wrongCircle', 26) }),
-        h('b', { text: grade.correct ? 'Juist!' : 'Niet juist' }),
+        h('b', { text: self ? 'Juist gerekend' : grade.correct ? 'Juist!' : 'Niet juist' }),
       ),
+      self && grade.expected
+        ? h('p', { class: 'feedback-expected' }, 'Het woord uit je cursus: ', h('strong', { text: grade.expected }))
+        : null,
       !grade.correct && grade.expected
         ? q.format === 'tf'
           ? h('p', { class: 'feedback-expected' }, 'Deze uitspraak is ', h('strong', { text: grade.expected.toLowerCase() }), '.')
@@ -262,6 +310,14 @@ export function quizRunMode(env: PageEnv): ModeHandle {
       grade.steps.length > 0 ? h('ol', { class: 'feedback-steps' }, grade.steps.map((st) => h('li', { text: st }))) : null,
       q.options && q.options.some((o) => o.why) ? h('p', { class: 'feedback-tip', text: 'Tik op een antwoord om te zien waarom.' }) : null,
       q.item.source_label ? h('div', { class: 'feedback-meta' }, chip(q.item.source_label, 'chip-source')) : null,
+      held
+        ? h(
+            'div',
+            { class: 'feedback-self' },
+            h('p', { class: 'feedback-tip', text: 'Schreef je hetzelfde in andere woorden? Wees eerlijk: het woord uit je cursus moet je op het examen kennen.' }),
+            h('button', { class: 'btn btn-soft btn-small', type: 'button', text: 'Ik bedoelde hetzelfde', on: { click: () => void meantSame(q) } }),
+          )
+        : null,
     );
     body.querySelector('.qz-card')?.appendChild(panel);
     body.querySelector('.qz-hint-link')?.remove();
@@ -279,6 +335,14 @@ export function quizRunMode(env: PageEnv): ModeHandle {
 
   async function nextQuestion(): Promise<void> {
     if (!run || busy) return;
+    if (held) {
+      busy = true;
+      try {
+        await settle(false);
+      } finally {
+        busy = false;
+      }
+    }
     if (index < run.questions.length - 1) {
       index++;
       showQuestion();
@@ -418,9 +482,11 @@ export function quizRunMode(env: PageEnv): ModeHandle {
 
   /** Closing halfway: what he answered wrong still comes back tomorrow. */
   function saveHalfway(): void {
-    if (run && !finished && grades.size > 0) {
+    const r = run;
+    if (r && !finished && grades.size > 0) {
       finished = true;
-      void ctx.actions.finishQuiz(run, grades);
+      // A fill-in answer still waiting for his verdict counts as the app graded it.
+      void settle(false).then(() => ctx.actions.finishQuiz(r, grades));
     }
   }
 

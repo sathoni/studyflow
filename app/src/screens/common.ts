@@ -8,6 +8,7 @@ import { icon } from '../ui/icons.ts';
 import { openSheet, toast } from '../ui/overlay.ts';
 import { boxBadge, chaptersLabel, courseTile, pctLabel, progressBar, rich } from '../ui/parts.ts';
 import type { Card, Course, FlagReason } from '../lib/model.ts';
+import { sourceProof } from '../lib/model.ts';
 import { cardsLabel, minutesLabel, type TodayQueue } from '../lib/queue.ts';
 import { SCORE_LABELS, scorePreview, type DueInstrument, type InstrumentState } from '../lib/instruments.ts';
 import type { InstrumentScore } from '../lib/model.ts';
@@ -246,4 +247,17 @@ export function tomorrowLine(t: TodayQueue): string {
   return r.items.length > 0
     ? `Morgen om 7:00: herhaling ${minutesLabel(r.remainingSec)} · ${cardsLabel(r.items.length)}`
     : 'Morgen geen herhaling gepland.';
+}
+
+/** "Bewijs uit je cursus": the passage a card rests on, closed by default. */
+export function proofBlock(card: Card): HTMLElement | null {
+  const proof = sourceProof(card.source);
+  if (!proof) return null;
+  return h(
+    'details',
+    { class: 'rv-more rv-proof' },
+    h('summary', {}, h('span', { class: 'chev', html: icon('chevronRight', 16) }), 'Bewijs uit je cursus'),
+    h('blockquote', { class: 'rv-quote', text: proof.quote }),
+    h('p', { class: `rv-proof-tag ${proof.status}`, text: `${proof.status === 'checked' ? '✓ ' : ''}${proof.label} · ${card.source.label}` }),
+  );
 }
