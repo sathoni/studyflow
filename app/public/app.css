@@ -1201,3 +1201,27 @@ html.in-mode.mode-end .toast { bottom: calc(var(--safe-bottom) + 94px); }
 .rv-quote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--line); font-size: 14px; color: var(--text-2); text-align: left; white-space: pre-line; }
 .rv-proof-tag { margin: 6px 0 0 !important; font-size: 12.5px !important; color: var(--muted) !important; text-align: left; }
 .rv-proof-tag.checked { color: var(--good-text) !important; }
+
+/* ---------------- Home: today, step by step (20/11) ---------------- */
+.steps { padding: 18px 18px 8px; }
+.steps-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.steps-head h2 { font-size: 18px; margin: 0; }
+.steps-count { font-size: 12.5px; font-weight: 600; color: var(--muted); flex: none; }
+.steps-list { list-style: none; margin: 0; padding: 0; }
+.step { border-top: 1px solid var(--line); }
+.step:first-child { border-top: 0; }
+.step-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; }
+.step-btn { cursor: pointer; }
+.step-badge { width: 28px; height: 28px; border-radius: 99px; display: inline-flex; align-items: center; justify-content: center; flex: none; font-size: 13.5px; font-weight: 800; background: var(--surface-2); color: var(--text-2); }
+.step.now .step-badge { background: var(--primary); color: var(--on-primary); }
+.step.done .step-badge { background: var(--good-soft); color: var(--good-text); }
+.step-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.step-kicker { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.step.now .step-kicker { color: var(--primary-text); }
+.step-title { font-size: 15.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step.now .step-title { font-size: 19px; white-space: normal; }
+.step-meta { font-size: 13px; color: var(--muted); }
+.step.now .step-meta { font-size: 14px; font-weight: 600; color: var(--text-2); }
+.step.done .step-title { color: var(--muted); font-weight: 600; }
+.step-body { padding: 0 0 14px 40px; }
+.step-body .hero-reason { margin-bottom: 12px; }

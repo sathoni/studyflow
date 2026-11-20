@@ -1,8 +1,9 @@
 /**
  * Home (SPEC-v3 §2 R1): the greeting with today's ring and the week's bars,
- * a new session quiz, today's two lists (🌅 Herhaling at 7:00 and 🌙 Nieuwe
- * kaartjes in the evening, the one for now on top, his wish of 29/10), the
- * instruments for the daytime and a chapter-quiz suggestion. The course list
+ * then "Vandaag, stap voor stap": one numbered list of what to do today, in
+ * order (🌅 Herhaling, the mini-quiz, the instruments on paper, 🌙 Nieuwe
+ * kaartjes), the next step open with its Start button, done steps ticked (his
+ * wish of 20/11: "dat ik weet: dat moet ik doen, dan dat"). The course list
  * lives only on the Vakken tab (his wish, 26/10: Home must feel calm).
  */
 
@@ -13,7 +14,7 @@ import { ROLLOVER_HOUR, brusselsClock, greeting } from '../lib/dates.ts';
 import { readProfile } from '../lib/model.ts';
 import { cardsLabel, minutesLabel, tomorrowQueue, type QueuePart } from '../lib/queue.ts';
 import { queueInput } from '../lib/data.ts';
-import { homeQuizSuggestion } from '../lib/quiz.ts';
+import { homeQuizSuggestion, type HomeQuizSuggestion } from '../lib/quiz.ts';
 import { dueInstruments } from '../lib/instruments.ts';
 import { streak, weekBars } from '../lib/stats.ts';
 import type { PageEnv } from './shell.ts';
@@ -37,10 +38,8 @@ export function renderHome(env: PageEnv): Node {
     ),
     banner(env),
     greetingCard(env),
-    suggestion?.kind === 'sessie' ? sessionQuizCard(env, suggestion.entry.quiz.id, suggestion.entry.quiz.title, suggestion.entry.questions) : null,
-    todayLists(env),
+    todaySteps(env, suggestion),
     overdag(env),
-    suggestion?.kind === 'hoofdstuk' ? chapterQuizRow(env, suggestion.entry.chapter.id, suggestion.label, suggestion.entry.questions) : null,
     s.courses.length > 0
       ? null
       : emptyState('cloudCheck', 'Nog niets binnen', 'Je vakken en kaartjes komen vanzelf binnen zodra je iPhone online is.'),
@@ -83,21 +82,177 @@ function greetingCard(env: PageEnv): HTMLElement {
   );
 }
 
-function sessionQuizCard(env: PageEnv, quizId: string, title: string, n: number): HTMLElement {
-  const start = () => env.go(`quizrun/sessie/${quizId}`);
-  return h(
+
+/* ---------------- today, step by step ---------------- */
+
+interface Step {
+  key: string;
+  kicker: string;
+  title: string;
+  meta: string;
+  done: boolean;
+  go: () => void;
+  /** Shown under the open step: where the cards come from, why now. */
+  detail?: () => (Node | null)[];
+  label?: string;
+}
+
+/**
+ * What to do today, in order. The first step not done yet is open, with its
+ * Start button; the others are one line each. With nothing to do at all (no
+ * cards yet, or a day without any list) the old cards say so.
+ */
+function todaySteps(env: PageEnv, suggestion: HomeQuizSuggestion): (Node | null)[] {
+  const { s, d } = env;
+  const q = d.queue;
+  if (d.live.length === 0) return todayLists(env);
+
+  const steps: Step[] = [];
+  const list = (kind: ListKind): void => {
+    const part = q.parts[kind];
+    if (part.items.length === 0) return;
+    const meta = LISTS[kind];
+    const left = part.remaining.length;
+    const repeats = part.repeats.length;
+    const counts = new Map<string, number>();
+    for (const i of part.remaining) counts.set(i.card.course_id, (counts.get(i.card.course_id) ?? 0) + 1);
+    steps.push({
+      key: kind,
+      kicker: meta.kicker,
+      title: meta.title,
+      meta: isOpen(part) ? `${cardsLabel(left || repeats)} · ${minutesLabel(part.remainingSec || repeats * q.timing.reviewSec)}` : 'Klaar',
+      done: !isOpen(part),
+      go: () => env.go(meta.route),
+      label: left === 0 ? `Opnieuw · nog ${repeats}` : part.doneCount > 0 ? `Ga verder · nog ${left}` : 'Start',
+      detail: () => [
+        left > 0
+          ? h(
+              'div',
+              { class: 'chips' },
+              part.courseChips
+                .filter((id) => counts.has(id))
+                .map((id) => h('span', { class: 'course-chip', style: `--cc:${d.courses.get(id)?.color ?? '#2F6BFF'}` }, h('i', { class: 'dot' }), `${id} ${counts.get(id)}`)),
+            )
+          : null,
+        h('p', { class: 'hero-reason', text: kind === 'new' && q.plan.reason ? q.plan.reason : meta.reason }),
+        part.doneCount > 0 && left > 0 ? h('div', { class: 'hero-progress' }, h('i', { style: `width:${Math.round(part.progress * 100)}%` })) : null,
+      ],
+    });
+  };
+
+  list('review');
+  if (suggestion?.kind === 'sessie') {
+    const e = suggestion.entry;
+    steps.push({
+      key: 'quiz',
+      kicker: 'Mini-quiz · na je studie',
+      title: e.quiz.title,
+      meta: `${questionsLabel(e.questions)} · ${quizMinutes(e.questions)}`,
+      done: false,
+      go: () => env.go(`quizrun/sessie/${e.quiz.id}`),
+      detail: () => [h('p', { class: 'hero-reason', text: 'Over wat je net studeerde. Wat fout gaat, komt morgen terug in je kaartjes.' })],
+    });
+  } else if (suggestion?.kind === 'hoofdstuk') {
+    const e = suggestion.entry;
+    steps.push({
+      key: 'quiz',
+      kicker: 'Hoofdstuk af · quiz',
+      title: `${e.chapter.course_id} ${e.chapter.code} · ${e.chapter.title}`,
+      meta: `${questionsLabel(e.questions)} · ${quizMinutes(e.questions)}`,
+      done: false,
+      go: () => env.go(`quizrun/hoofdstuk/${e.chapter.id}`),
+      detail: () => [h('p', { class: 'hero-reason', text: 'Je zag dit hoofdstuk volledig. Test of het erin zit.' })],
+    });
+  }
+  const due = dueInstruments(s.instruments, s.instrumentReviews, s.today, q.plan.courseOrder);
+  if (due.length > 0) {
+    const open = due.filter((x) => !x.doneToday);
+    const minutes = open.reduce((sum, x) => sum + (x.instrument.minutes || 10), 0);
+    steps.push({
+      key: 'overdag',
+      kicker: '☀️ Overdag · op papier',
+      title: open.length === 1 ? open[0].instrument.title : 'Oefenen op papier',
+      meta: open.length === 0 ? 'Klaar' : `${open.length === 1 ? '1 instrument' : `${open.length} instrumenten`} · ±${minutes} min`,
+      done: open.length === 0,
+      label: 'Toon',
+      go: () => {
+        overdagOpen = true;
+        env.redraw();
+        requestAnimationFrame(() => document.querySelector('.overdag')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+      },
+      detail: () => [h('p', { class: 'hero-reason', text: 'Een schema of oefening uit Notion, met pen en papier. Tik daarna op Gedaan.' })],
+    });
+  }
+  list('new');
+
+  if (steps.length === 0) return todayLists(env);
+  const next = steps.find((x) => !x.done) ?? null;
+  const doneCount = steps.filter((x) => x.done).length;
+
+  const card = h(
     'section',
-    { class: 'card quiz-new', role: 'button', tabindex: '0', on: { click: start, keydown: (e: KeyboardEvent) => (e.key === 'Enter' ? start() : undefined) } },
-    h('span', { class: 'quiz-new-icon', html: icon('sparkle', 22) }),
+    { class: 'card steps' },
     h(
-      'span',
-      { class: 'quiz-new-text' },
-      h('span', { class: 'quiz-new-label', text: 'Nieuwe quiz' }),
-      h('span', { class: 'quiz-new-title', text: title }),
-      h('span', { class: 'quiz-new-meta', text: `${questionsLabel(n)} · ${quizMinutes(n)}` }),
+      'div',
+      { class: 'steps-head' },
+      h('h2', { text: 'Vandaag, stap voor stap' }),
+      h('span', { class: 'steps-count', text: `${doneCount} van ${steps.length} gedaan` }),
     ),
-    h('span', { class: 'btn btn-primary btn-small', text: 'Start' }),
+    h(
+      'ol',
+      { class: 'steps-list' },
+      steps.map((step, i) => {
+        const now = step === next;
+        const badge = h('span', { class: 'step-badge' }, step.done ? h('span', { html: icon('check', 14) }) : String(i + 1));
+        const text = h(
+          'span',
+          { class: 'step-text' },
+          h('small', { class: 'step-kicker', text: now ? `Nu · ${step.kicker}` : step.kicker }),
+          h('b', { class: 'step-title', text: step.title }),
+          h('span', { class: 'step-meta', text: step.meta }),
+        );
+        if (now) {
+          return h(
+            'li',
+            { class: 'step now' },
+            h('div', { class: 'step-row' }, badge, text),
+            h(
+              'div',
+              { class: 'step-body' },
+              ...(step.detail?.() ?? []),
+              h('button', { class: 'btn btn-primary btn-big btn-block', type: 'button', on: { click: step.go } }, h('span', { html: icon('play', 18) }), step.label ?? 'Start'),
+            ),
+          );
+        }
+        if (step.done) return h('li', { class: 'step done' }, h('div', { class: 'step-row' }, badge, text));
+        return h(
+          'li',
+          { class: 'step later' },
+          h('button', { class: 'step-row step-btn', type: 'button', on: { click: step.go } }, badge, text, h('span', { class: 'chev', html: icon('chevronRight', 18) })),
+        );
+      }),
+    ),
   );
+
+  // Everything ticked: what tomorrow holds, and where to practise more.
+  if (!next) {
+    return [
+      card,
+      h(
+        'section',
+        { class: 'card hero hero-done' },
+        h('p', { class: 'hero-done-title' }, h('span', { class: 'hero-check', html: icon('checkCircle', 26) }), 'Klaar voor vandaag'),
+        h('p', { class: 'hero-reason', text: tomorrowLine(tomorrowQueue(queueInput(s))) }),
+        h(
+          'div',
+          { class: 'hero-actions' },
+          h('button', { class: 'btn btn-soft', type: 'button', on: { click: () => env.go('quiz') } }, h('span', { html: icon('quiz', 18) }), 'Quiz of proefexamen'),
+          h('button', { class: 'btn btn-soft', type: 'button', on: { click: () => env.go('vakken') } }, h('span', { html: icon('courses', 18) }), 'Extra oefenen'),
+        ),
+      ),
+    ];
+  }
+  return [card];
 }
 
 type ListKind = 'review' | 'new';
@@ -287,12 +442,3 @@ function overdag(env: PageEnv): HTMLElement | null {
   return h('section', { class: 'card overdag' }, toggle, list);
 }
 
-function chapterQuizRow(env: PageEnv, chapterId: string, label: string, n: number): HTMLElement {
-  return h(
-    'section',
-    { class: 'card suggest', role: 'button', tabindex: '0', on: { click: () => env.go(`quizrun/hoofdstuk/${chapterId}`) } },
-    h('span', { class: 'suggest-icon', html: icon('sealCheck', 22) }),
-    h('span', { class: 'suggest-text' }, h('small', { text: 'Hoofdstuk af' }), h('b', { text: label }), h('span', { class: 'suggest-meta', text: quizMinutes(n) })),
-    h('span', { class: 'btn btn-primary btn-small', text: 'Quiz' }),
-  );
-}
