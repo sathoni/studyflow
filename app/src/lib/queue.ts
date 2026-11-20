@@ -16,8 +16,9 @@
  *      up to day_plan.cap (default 20, Sunday 30); the rest rolls over, silently.
  *   3. Evening: every new card of today's and yesterday's lessons and self-studies,
  *      always; then other new cards up to day_plan.new_max in all (default 10,
- *      Sunday 5): quiz-flagged, near test, the plan's courses taking turns, the
- *      rest; within a course the most recent study first, split cards together.
+ *      Sunday 5; settings.defaults.catch_up raises it until a date): quiz-flagged,
+ *      near test, the plan's courses taking turns, the rest; within a course the
+ *      exam points first, then the most recent study, split cards together.
  *   4. Extra practice (a chapter or course round, "Nog een ronde") is logged as
  *      mode 'extra'. It never takes a place in these lists, and a card done that
  *      way is not asked again the same day.
@@ -137,10 +138,13 @@ export function planFor(
 ): Omit<DayPlanResolved, 'courseOrder'> & { planOrder: string[] } {
   const row = dayPlans.find((p) => p.day === day) ?? null;
   const sunday = isSunday(day);
+  const normalNew = sunday ? defaults.new_max_sunday : defaults.new_max;
+  const cu = defaults.catch_up;
+  const defaultNew = cu && day <= cu.until ? Math.max(normalNew, cu.new_max) : normalNew;
   return {
     day,
     cap: row?.cap ?? (sunday ? defaults.cap_sunday : defaults.cap),
-    newMax: row?.new_max ?? (sunday ? defaults.new_max_sunday : defaults.new_max),
+    newMax: row?.new_max ?? defaultNew,
     reason: row?.reason ?? null,
     fromPlan: row !== null,
     planOrder: row?.course_order ?? [],
@@ -358,6 +362,11 @@ export function buildQueue(input: QueueInput): TodayQueue {
     (a.card.sibling_group ?? '').localeCompare(b.card.sibling_group ?? '') ||
     a.card.id.localeCompare(b.card.id);
 
+  // Catch-up cards: within a course the exam points (exam_value 3) come first, so
+  // whatever he gets through before the blok is what counts most.
+  const examFirst = (a: Ranked, b: Ranked) =>
+    (a.card.exam_value === 3 ? 0 : 1) - (b.card.exam_value === 3 ? 0 : 1);
+
   // 3a. Everything from today's and yesterday's lessons and self-studies, always.
   const fixed = newCards.filter((r) => fresh(r.card.id)).sort((a, b) => a.rank - b.rank || byStudy(a, b));
 
@@ -370,6 +379,7 @@ export function buildQueue(input: QueueInput): TodayQueue {
         (flagged(a) ? 0 : 1) - (flagged(b) ? 0 : 1) ||
         near.get(a.card.id)! - near.get(b.card.id)! ||
         a.rank - b.rank ||
+        examFirst(a, b) ||
         byStudy(a, b),
     );
   if (base.planOrder.length >= 2) {

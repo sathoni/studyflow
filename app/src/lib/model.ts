@@ -409,6 +409,12 @@ export interface Defaults {
   est_sec_review: number;
   est_sec_new: number;
   reminder_at: string;
+  /**
+   * Inhaalplan: up to and including `until`, a day whose plan names no new_max
+   * gets this many new cards in the evening list (never fewer than the normal
+   * default). It ends by itself, so nobody has to remember to switch it off.
+   */
+  catch_up: { until: string; new_max: number } | null;
 }
 
 export const DEFAULTS: Defaults = {
@@ -420,6 +426,7 @@ export const DEFAULTS: Defaults = {
   est_sec_review: 15,
   est_sec_new: 30,
   reminder_at: '21:00',
+  catch_up: null,
 };
 
 /**
@@ -439,6 +446,12 @@ export function readDefaults(settings: readonly Setting[]): Defaults {
     raw.wait_days.every((n) => typeof n === 'number' && n > 0)
       ? (raw.wait_days as number[])
       : DEFAULTS.wait_days;
+  const cu = raw.catch_up as { until?: unknown; new_max?: unknown } | null | undefined;
+  const catchUp =
+    cu && typeof cu.until === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(cu.until) &&
+    typeof cu.new_max === 'number' && Number.isFinite(cu.new_max) && cu.new_max >= 0 && cu.new_max <= 60
+      ? { until: cu.until, new_max: cu.new_max }
+      : null;
   return {
     cap: num(raw.cap, DEFAULTS.cap),
     cap_sunday: num(raw.cap_sunday, DEFAULTS.cap_sunday),
@@ -448,6 +461,7 @@ export function readDefaults(settings: readonly Setting[]): Defaults {
     est_sec_review: num(raw.est_sec_review, DEFAULTS.est_sec_review) || DEFAULTS.est_sec_review,
     est_sec_new: num(raw.est_sec_new, DEFAULTS.est_sec_new) || DEFAULTS.est_sec_new,
     reminder_at: typeof raw.reminder_at === 'string' ? raw.reminder_at : DEFAULTS.reminder_at,
+    catch_up: catchUp,
   };
 }
 

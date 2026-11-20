@@ -521,3 +521,45 @@ test('yesterday\'s study not reviewed yet comes back first the next evening', ()
   const q = buildQueue(input([other, c], [], { sessions, dayPlans: [plan(TODAY, ['SCM'], { new_max: 1 })] }));
   assert.deepEqual(ids(q.parts.new.items), ['thu-card'], 'even when the plan names other courses');
 });
+
+/* ---- the catch-up plan (20/11) ---- */
+
+test('catch-up: until its end date a day without new_max takes more new cards, then it stops by itself', () => {
+  const d = { ...DEFAULTS, catch_up: { until: '2026-12-13', new_max: 20 } };
+  assert.equal(planFor('2026-11-23', [], d).newMax, 20, 'a weekday inside the plan');
+  assert.equal(planFor('2026-11-22', [], d).newMax, 20, 'a Sunday inside the plan');
+  assert.equal(planFor('2026-12-13', [], d).newMax, 20, 'the last day counts');
+  assert.equal(planFor('2026-12-14', [], d).newMax, 10, 'the day after: back to normal');
+  assert.equal(planFor('2026-12-20', [], d).newMax, 5, 'a Sunday after: back to normal');
+  assert.equal(planFor('2026-11-23', [plan('2026-11-23', ['FB'], { new_max: 30 })], d).newMax, 30, 'a planned number wins');
+  assert.equal(planFor('2026-11-23', [plan('2026-11-23', ['FB'], { new_max: 0 })], d).newMax, 0, 'also a planned zero');
+  assert.equal(planFor('2026-11-23', [plan('2026-11-23', ['FB'])], d).newMax, 20, 'a plan row without a number gets the catch-up');
+  assert.equal(planFor(TODAY, [], { ...DEFAULTS, catch_up: { until: '2026-12-13', new_max: 4 } }).newMax, 10, 'never fewer than normal');
+  assert.equal(planFor(TODAY, [], DEFAULTS).newMax, 10, 'no catch-up set: nothing changes');
+});
+
+test('catch-up cards: within a course the exam points come first', () => {
+  const plain = card('FB-H1', { id: 'fb-plain', created_at: '2026-10-01T10:00:00Z' });
+  const exam3 = card('FB-H1', { id: 'fb-exam', exam_value: 3, created_at: '2026-10-05T10:00:00Z' });
+  const orPlain = card('OR-H1', { id: 'or-plain', created_at: '2026-10-01T10:00:00Z' });
+  const orExam = card('OR-H1', { id: 'or-exam', exam_value: 3, created_at: '2026-10-05T10:00:00Z' });
+  // Two places, two planned courses: each gives its exam card, not its oldest card.
+  const two = buildQueue(input([plain, exam3, orPlain, orExam], [], { dayPlans: [plan(TODAY, ['FB', 'OR'], { new_max: 2 })] }));
+  assert.deepEqual(ids(two.items), ['fb-exam', 'or-exam']);
+  // Room for all: per course, exam card first.
+  const all = buildQueue(input([plain, exam3, orPlain, orExam], [], { dayPlans: [plan(TODAY, ['FB', 'OR'], { new_max: 10 })] }));
+  assert.deepEqual(ids(all.items), ['fb-exam', 'fb-plain', 'or-exam', 'or-plain']);
+  // Without a plan the course order still goes first, the exam card first inside it.
+  const free = buildQueue(input([plain, exam3], [], {}));
+  assert.deepEqual(ids(free.items), ['fb-exam', 'fb-plain']);
+});
+
+test('today\'s study still goes before any catch-up exam card', () => {
+  const fresh = card('SCM-H3', { id: 'scm-today' });
+  const old = card('SCM-H3', { id: 'scm-old-exam', exam_value: 3, created_at: '2026-10-01T10:00:00Z' });
+  const sessions: StudySession[] = [
+    { id: 's1', session_key: `SCM-H3:${TODAY}:1-5`, course_id: 'SCM', chapter_id: 'SCM-H3', kind: 'zelfstudie', title: 't', card_ids: ['scm-today'], created_at: T0, updated_at: T0 },
+  ];
+  const q = buildQueue(input([old, fresh], [], { sessions }));
+  assert.deepEqual(ids(q.items), ['scm-today', 'scm-old-exam']);
+});
