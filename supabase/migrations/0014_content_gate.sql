@@ -39,3 +39,8 @@
 -- Also on 20/11, data only: 111 live quiz stems that named a slide number were
 -- reworded to name the concept instead (the old stems are kept in
 -- public._backup_quiz_stems_20261120).
+
+-- Later on 20/11, after Mathieu added the new skill (as a plugin) in Claude:
+-- a card without source.quote is now an ERROR, no longer a warning. The message
+-- tells the writer what to add, so a session on old rules corrects itself on
+-- its retry. Imports are still left alone.
