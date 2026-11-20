@@ -8,7 +8,7 @@
 import { h } from '../ui/dom.ts';
 import { icon } from '../ui/icons.ts';
 import { courseTile, courseVars, emptyState, pageTitle, pctLabel, questionsLabel, sectionTitle } from '../ui/parts.ts';
-import { chapterQuizList, courseQuizList, parseScope, runScores, sessionQuizList, type RunScore } from '../lib/quiz.ts';
+import { chapterQuizList, courseQuizList, examList, parseScope, runScores, sessionQuizList, type RunScore } from '../lib/quiz.ts';
 import { relativeDay } from '../lib/dates.ts';
 import type { PageEnv } from './shell.ts';
 import { quizMinutes } from './common.ts';
@@ -19,6 +19,7 @@ export function renderQuiz(env: PageEnv): Node {
   const sessions = sessionQuizList(d.qdata);
   const chapters = chapterQuizList(d.qdata);
   const mixed = courseQuizList(d.qdata);
+  const exams = examList(d.qdata);
   const scores = runScores(d.qdata).slice(0, 6);
 
   if (sessions.length === 0 && chapters.length === 0 && mixed.length === 0) {
@@ -70,6 +71,29 @@ export function renderQuiz(env: PageEnv): Node {
               e.done ? h('span', { class: 'score-pill', text: e.last ? `${e.last.correct}/${e.last.total}` : '' }) : h('span', { class: 'btn btn-primary btn-small', text: 'Start' }),
             );
           }),
+        )
+      : null,
+
+    exams.length > 0 ? sectionTitle('Proefexamen per vak') : null,
+    exams.length > 0 ? h('p', { class: 'page-lead', text: 'In de vorm van je echte examen, met een klok. Je ziet pas op het einde wat juist was, met je score per hoofdstuk.' }) : null,
+    exams.length > 0
+      ? h(
+          'div',
+          { class: 'list' },
+          exams.map((e) =>
+            h(
+              'button',
+              { class: 'row-card quiz-row', type: 'button', style: courseVars(e.course), on: { click: () => env.go(`quizrun/examen/${e.course.id}`) } },
+              courseTile(e.course, 'md'),
+              h(
+                'span',
+                { class: 'row-main' },
+                h('span', { class: 'row-title', text: e.course.name }),
+                h('span', { class: 'row-sub', text: `${questionsLabel(e.questions)} · ${e.minutes} min · ${e.form.label.toLowerCase()}` }),
+              ),
+              e.last ? h('span', { class: 'score-pill', text: `${e.last.correct}/${e.last.total}` }) : h('span', { class: 'chev', html: icon('chevronRight', 18) }),
+            ),
+          ),
         )
       : null,
 
@@ -142,6 +166,7 @@ function scoreLine(env: PageEnv, r: RunScore): HTMLElement {
     const ch = d.chapters.get(scope.id);
     label = ch ? `Hoofdstukquiz ${chapterCode(ch)}` : 'Hoofdstukquiz';
   } else if (scope?.kind === 'vak') label = `Gemengde quiz ${scope.id}`;
+  else if (scope?.kind === 'examen') label = `Proefexamen ${scope.id}`;
   const share = r.total ? r.correct / r.total : 0;
   return h(
     'div',

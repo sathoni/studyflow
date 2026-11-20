@@ -12,6 +12,11 @@ import {
   buildMistakeRun,
   buildRun,
   cardsStillWrong,
+  chapterScores,
+  examList,
+  examPool,
+  sampleExam,
+  EXAM_FORMS,
   chapterQuizList,
   courseQuizList,
   formatBelgianNumber,
@@ -41,19 +46,19 @@ import {
 } from './quiz.ts';
 import { COURSES, T0, attempt, card, chapter, item, seeded } from './testkit.ts';
 
-const CHAPTERS = [chapter('SCM-H2', 2, 'af'), chapter('SCM-H3', 3), chapter('FB-H1', 1), chapter('BE-U1', 1)];
+const CHAPTERS = [chapter('IFHT-H2', 2, 'af'), chapter('IFHT-H3', 3), chapter('FB-H1', 1), chapter('BE-U1', 1)];
 
-/** 12 SCM-H3 cards with an mcq, a tf and a cloze each; 3 SCM-H2 cards; 2 FB cards with numeric items. */
+/** 12 IFHT-H3 cards with an mcq, a tf and a cloze each; 3 IFHT-H2 cards; 2 FB cards with numeric items. */
 function world() {
   const cards: Card[] = [];
   const items: QuizItem[] = [];
   for (let i = 0; i < 12; i++) {
-    const c = card('SCM-H3', { id: `h3-${String(i).padStart(2, '0')}` });
+    const c = card('IFHT-H3', { id: `h3-${String(i).padStart(2, '0')}` });
     cards.push(c);
     items.push(item(c, 'mcq'), item(c, 'tf'), item(c, 'cloze'));
   }
   for (let i = 0; i < 3; i++) {
-    const c = card('SCM-H2', { id: `h2-${i}` });
+    const c = card('IFHT-H2', { id: `h2-${i}` });
     cards.push(c);
     items.push(item(c, 'mcq'));
   }
@@ -77,8 +82,8 @@ function data(extra: Partial<QuizData> = {}): QuizData {
 
 function sessionQuiz(id: string, itemIds: string[], extra: Partial<Quiz> = {}): Quiz {
   return {
-    id, kind: 'sessie', session_id: `s-${id}`, course_id: 'SCM', chapter_id: 'SCM-H3',
-    title: 'SCM H3 · dia 121–135', item_ids: itemIds, created_at: T0, updated_at: T0, ...extra,
+    id, kind: 'sessie', session_id: `s-${id}`, course_id: 'IFHT', chapter_id: 'IFHT-H3',
+    title: 'IFHT H3 · dia 121–135', item_ids: itemIds, created_at: T0, updated_at: T0, ...extra,
   };
 }
 
@@ -86,7 +91,7 @@ function sessionQuiz(id: string, itemIds: string[], extra: Partial<Quiz> = {}): 
 
 test('scope keys match quiz_attempts.scope', () => {
   assert.equal(scopeKey({ kind: 'sessie', id: 'q1' }), 'sessie:q1');
-  assert.equal(scopeKey({ kind: 'hoofdstuk', id: 'SCM-H3' }), 'hoofdstuk:SCM-H3');
+  assert.equal(scopeKey({ kind: 'hoofdstuk', id: 'IFHT-H3' }), 'hoofdstuk:IFHT-H3');
   assert.deepEqual(parseScope('vak:FB'), { kind: 'vak', id: 'FB' });
   assert.equal(parseScope('weekquiz:1'), null);
   assert.equal(parseScope(null), null);
@@ -96,13 +101,13 @@ test('scope keys match quiz_attempts.scope', () => {
 
 test('session quiz: the first time exactly its fixed items, in their order', () => {
   const d = data();
-  const ids = d.items.filter((i) => i.chapter_id === 'SCM-H3').slice(0, 8).map((i) => i.id);
+  const ids = d.items.filter((i) => i.chapter_id === 'IFHT-H3').slice(0, 8).map((i) => i.id);
   d.quizzes = [sessionQuiz('q1', ids)];
   const a = buildRun({ kind: 'sessie', id: 'q1' }, d, { rng: seeded(1) })!;
   const b = buildRun({ kind: 'sessie', id: 'q1' }, d, { rng: seeded(99) })!;
   assert.deepEqual(a.questions.map((q) => q.item.id), ids);
   assert.deepEqual(b.questions.map((q) => q.item.id), ids, 'not done yet: still the fixed set');
-  assert.equal(a.title, 'SCM H3 · dia 121–135');
+  assert.equal(a.title, 'IFHT H3 · dia 121–135');
   assert.equal(a.scope_key, 'sessie:q1');
   assert.equal(a.kind_label, 'Na je studie');
   assert.deepEqual(a.questions.map((q) => q.n), [1, 2, 3, 4, 5, 6, 7, 8]);
@@ -123,24 +128,24 @@ test('session quiz done before: same cards, other questions (unseen items first)
 
 test('weak spots: up to half of a chapter quiz goes back to what went wrong, in another wording', () => {
   const d = data();
-  const wrong = d.items.filter((i) => i.chapter_id === 'SCM-H3' && i.format === 'mcq').slice(0, 3);
-  d.attempts = wrong.map((i, n) => attempt(i, 'run-2-0000-4000-8000-000000000002', 'hoofdstuk:SCM-H3', false, '2026-10-24', n));
+  const wrong = d.items.filter((i) => i.chapter_id === 'IFHT-H3' && i.format === 'mcq').slice(0, 3);
+  d.attempts = wrong.map((i, n) => attempt(i, 'run-2-0000-4000-8000-000000000002', 'hoofdstuk:IFHT-H3', false, '2026-10-24', n));
   const now = Date.parse('2026-10-26T18:00:00Z');
   for (let seed = 1; seed <= 5; seed++) {
-    const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(seed), now })!;
+    const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(seed), now })!;
     const weakAsked = run.questions.filter((q) => wrong.some((w) => w.card_id === q.item.card_id));
     assert.equal(weakAsked.length, 3, 'all three weak cards come back (half of 10 = 5 slots)');
     assert.ok(weakAsked.every((q) => q.item.format !== 'mcq'), 'asked in another wording than the one that went wrong');
   }
   // Answered right since: no longer weak. Older than 21 days: forgotten as a weak spot.
-  const fixedLater = [...d.attempts, ...wrong.map((i, n) => attempt(i, 'run-3-0000-4000-8000-000000000003', 'hoofdstuk:SCM-H3', true, '2026-10-25', n))];
+  const fixedLater = [...d.attempts, ...wrong.map((i, n) => attempt(i, 'run-3-0000-4000-8000-000000000003', 'hoofdstuk:IFHT-H3', true, '2026-10-25', n))];
   assert.equal(weakCards(fixedLater, now).size, 0);
   assert.equal(weakCards(d.attempts, Date.parse('2026-11-20T18:00:00Z')).size, 0);
 });
 
 test('session quiz skips retired items and items of cards that left the queue', () => {
   const d = data();
-  const [i1, i2, i3] = d.items.filter((i) => i.format === 'mcq' && i.chapter_id === 'SCM-H3');
+  const [i1, i2, i3] = d.items.filter((i) => i.format === 'mcq' && i.chapter_id === 'IFHT-H3');
   d.items = d.items.map((i) => (i.id === i2.id ? { ...i, status: 'retired' as const } : i));
   d.cards = d.cards.map((c) => (c.id === i3.card_id ? { ...c, status: 'needs_check' as const } : c));
   d.quizzes = [sessionQuiz('q1', [i1.id, i2.id, i3.id, 'missing-item'])];
@@ -167,20 +172,20 @@ test('Business English never gets a quiz of any kind', () => {
 test('chapter quiz: 10 questions, at most one per card, only from that chapter', () => {
   const d = data();
   for (let seed = 1; seed <= 20; seed++) {
-    const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(seed) })!;
+    const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(seed) })!;
     assert.equal(run.questions.length, RUN_LENGTH);
     const cards = run.questions.map((q) => q.item.card_id);
     assert.equal(new Set(cards).size, cards.length, 'one item per card');
-    assert.ok(run.questions.every((q) => q.item.chapter_id === 'SCM-H3'));
-    assert.equal(run.title, 'SCM H3');
-    assert.equal(run.chapter_id, 'SCM-H3');
+    assert.ok(run.questions.every((q) => q.item.chapter_id === 'IFHT-H3'));
+    assert.equal(run.title, 'IFHT H3');
+    assert.equal(run.chapter_id, 'IFHT-H3');
   }
 });
 
 test('formats are mixed as evenly as the pool allows', () => {
   const d = data();
   for (let seed = 1; seed <= 20; seed++) {
-    const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(seed) })!;
+    const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(seed) })!;
     const count = { mcq: 0, tf: 0, cloze: 0, numeric: 0 };
     for (const q of run.questions) count[q.format]++;
     // 10 questions over three formats: 4/3/3 in some order.
@@ -190,17 +195,17 @@ test('formats are mixed as evenly as the pool allows', () => {
 
 test('a course quiz mixes chapters and still keeps one item per card', () => {
   const d = data();
-  const run = buildRun({ kind: 'vak', id: 'SCM' }, d, { rng: seeded(3) })!;
+  const run = buildRun({ kind: 'vak', id: 'IFHT' }, d, { rng: seeded(3) })!;
   assert.equal(run.questions.length, 10);
-  assert.ok(run.questions.every((q) => q.item.course_id === 'SCM'));
-  assert.equal(run.title, 'Supply Chain Management');
+  assert.ok(run.questions.every((q) => q.item.course_id === 'IFHT'));
+  assert.equal(run.title, 'IFHT');
   assert.equal(run.kind_label, 'Gemengde quiz');
   // Across a few runs, both chapters show up.
   const chapters = new Set<string>();
   for (let s = 1; s <= 10; s++) {
-    for (const q of buildRun({ kind: 'vak', id: 'SCM' }, d, { rng: seeded(s) })!.questions) chapters.add(q.item.chapter_id);
+    for (const q of buildRun({ kind: 'vak', id: 'IFHT' }, d, { rng: seeded(s) })!.questions) chapters.add(q.item.chapter_id);
   }
-  assert.deepEqual([...chapters].sort(), ['SCM-H2', 'SCM-H3']);
+  assert.deepEqual([...chapters].sort(), ['IFHT-H2', 'IFHT-H3']);
 });
 
 test('a small pool gives a shorter quiz, an empty pool none', () => {
@@ -213,21 +218,21 @@ test('a small pool gives a shorter quiz, an empty pool none', () => {
 
 test('items seen in the last 2 runs are avoided while unseen ones remain', () => {
   const d = data();
-  const pool = poolFor({ kind: 'hoofdstuk', id: 'SCM-H3' }, d);
+  const pool = poolFor({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d);
   // Two recent runs asked the mcq and the tf of cards 0–9; a third, older run their cloze.
   const old: QuizAttempt[] = [];
   const firstTen = (format: string) => pool.filter((i) => i.format === format).slice(0, 10);
   const runA = firstTen('mcq');
   const runB = firstTen('tf');
   const runOld = firstTen('cloze');
-  runOld.forEach((i, n) => old.push(attempt(i, 'aaaaaaaa-run-old', 'hoofdstuk:SCM-H3', true, '2026-10-01', n)));
-  runA.forEach((i, n) => old.push(attempt(i, 'bbbbbbbb-run-a', 'hoofdstuk:SCM-H3', true, '2026-10-20', n)));
-  runB.forEach((i, n) => old.push(attempt(i, 'cccccccc-run-b', 'vak:SCM', false, '2026-10-22', n)));
+  runOld.forEach((i, n) => old.push(attempt(i, 'aaaaaaaa-run-old', 'hoofdstuk:IFHT-H3', true, '2026-10-01', n)));
+  runA.forEach((i, n) => old.push(attempt(i, 'bbbbbbbb-run-a', 'hoofdstuk:IFHT-H3', true, '2026-10-20', n)));
+  runB.forEach((i, n) => old.push(attempt(i, 'cccccccc-run-b', 'vak:IFHT', false, '2026-10-22', n)));
   const recent = recentItemIds(old, new Set(pool.map((i) => i.id)));
   assert.deepEqual([...recent].sort(), [...runA, ...runB].map((i) => i.id).sort(), 'the old run is forgotten');
 
   for (let seed = 1; seed <= 10; seed++) {
-    const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, { ...d, attempts: old }, { rng: seeded(seed) })!;
+    const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, { ...d, attempts: old }, { rng: seeded(seed) })!;
     assert.equal(run.questions.length, 10);
     // 36 items, 20 recent: every card still has an unseen item (its cloze, or all
     // three for cards 10–11), so none of the recent ones is asked.
@@ -245,25 +250,25 @@ test('when everything was seen lately, recent items are asked rather than nothin
 
 test('runs vary: two runs of the same chapter rarely ask the same ten in the same order', () => {
   const d = data();
-  const a = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(11) })!;
-  const b = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(12) })!;
+  const a = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(11) })!;
+  const b = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(12) })!;
   assert.notDeepEqual(a.questions.map((q) => q.item.id), b.questions.map((q) => q.item.id));
 });
 
 test('sampleItems is deterministic for a seed and never repeats a card', () => {
   const d = data();
-  const pool = poolFor({ kind: 'vak', id: 'SCM' }, d);
+  const pool = poolFor({ kind: 'vak', id: 'IFHT' }, d);
   const x = sampleItems(pool, new Set(), 10, seeded(7)).map((i) => i.id);
   const y = sampleItems(pool, new Set(), 10, seeded(7)).map((i) => i.id);
   assert.deepEqual(x, y);
   const all = sampleItems(pool, new Set(), 100, seeded(7));
-  assert.equal(all.length, 15, 'one per card: 12 + 3 SCM cards');
+  assert.equal(all.length, 15, 'one per card: 12 + 3 IFHT cards');
 });
 
 /* ---- options ---- */
 
 test('mcq options are shuffled with letters A–D; the correct one is tracked', () => {
-  const c = card('SCM-H3');
+  const c = card('IFHT-H3');
   const mcq = item(c, 'mcq');
   const positions = new Set<number>();
   for (let s = 1; s <= 30; s++) {
@@ -279,7 +284,7 @@ test('mcq options are shuffled with letters A–D; the correct one is tracked', 
 });
 
 test('true/false always reads Juist, Fout', () => {
-  const c = card('SCM-H3');
+  const c = card('IFHT-H3');
   const tf = item(c, 'tf', {
     options: [
       { text: 'Fout', correct: true, why: 'Want …' },
@@ -358,7 +363,7 @@ test('numeric answers: tolerance, units, and a 1% default', () => {
 /* ---- grading and the end screen ---- */
 
 test('gradeAnswer: mcq tap, tf correction, cloze and numeric text', () => {
-  const c = card('SCM-H3');
+  const c = card('IFHT-H3');
   const mcqQ = { n: 1, item: item(c, 'mcq'), format: 'mcq' as const, formatLabel: 'Meerkeuze', options: null as never };
   mcqQ.options = showOptions(mcqQ.item, seeded(4)) as never;
   const right = (mcqQ.options as { correct: boolean }[]).findIndex((o) => o.correct);
@@ -390,14 +395,14 @@ test('gradeAnswer: mcq tap, tf correction, cloze and numeric text', () => {
 
 test('attemptRow carries run, scope, study day and the original option index', () => {
   const d = data();
-  const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(2), runId: 'run-1' })!;
+  const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(2), runId: 'run-1' })!;
   const q = run.questions.find((x) => x.format === 'mcq')!;
   const tap = 2;
   const g = gradeAnswer(q, { option: tap });
   const row = attemptRow(run, q, { option: tap }, g, true, new Date('2026-10-26T01:30:00Z'), 'att-1');
   assert.equal(row.id, 'att-1');
   assert.equal(row.run_id, 'run-1');
-  assert.equal(row.scope, 'hoofdstuk:SCM-H3');
+  assert.equal(row.scope, 'hoofdstuk:IFHT-H3');
   assert.equal(row.card_id, q.item.card_id);
   assert.equal(row.hint_used, true);
   assert.equal(row.day, '2026-10-25', '02:30 Brussels still belongs to the evening before');
@@ -408,7 +413,7 @@ test('attemptRow carries run, scope, study day and the original option index', (
 
 test('end screen: score, mistakes, and which cards come back tomorrow', () => {
   const d = data();
-  const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(9) })!;
+  const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(9) })!;
   const grades = new Map<number, Grade>();
   for (const q of run.questions) {
     const right = q.n > 2;
@@ -430,9 +435,9 @@ test('end screen: score, mistakes, and which cards come back tomorrow', () => {
 
 test('Quiz tab: open session quizzes first, done ones with their last score', () => {
   const d = data();
-  const h3 = d.items.filter((i) => i.chapter_id === 'SCM-H3');
-  const qOld = sessionQuiz('q-old', h3.slice(0, 3).map((i) => i.id), { created_at: '2026-10-20T18:00:00Z', title: 'SCM H3 · dia 100–110' });
-  const qNew = sessionQuiz('q-new', h3.slice(3, 6).map((i) => i.id), { created_at: '2026-10-25T18:00:00Z', title: 'SCM H3 · dia 121–135' });
+  const h3 = d.items.filter((i) => i.chapter_id === 'IFHT-H3');
+  const qOld = sessionQuiz('q-old', h3.slice(0, 3).map((i) => i.id), { created_at: '2026-10-20T18:00:00Z', title: 'IFHT H3 · dia 100–110' });
+  const qNew = sessionQuiz('q-new', h3.slice(3, 6).map((i) => i.id), { created_at: '2026-10-25T18:00:00Z', title: 'IFHT H3 · dia 121–135' });
   const qDone = sessionQuiz('q-done', h3.slice(6, 9).map((i) => i.id), { created_at: '2026-10-22T18:00:00Z' });
   const attempts = h3.slice(6, 9).map((i, n) => attempt(i, 'eeeeeeee-run', 'sessie:q-done', n !== 0, '2026-10-23', n));
   const list = sessionQuizList({ ...d, quizzes: [qOld, qDone, qNew], attempts });
@@ -442,44 +447,44 @@ test('Quiz tab: open session quizzes first, done ones with their last score', ()
 
   const home = homeQuizSuggestion({ ...d, quizzes: [qOld, qDone, qNew], attempts });
   assert.equal(home?.kind, 'sessie');
-  assert.equal(home?.label, 'Nieuwe quiz · SCM H3 · dia 121–135');
+  assert.equal(home?.label, 'Nieuwe quiz · IFHT H3 · dia 121–135');
 });
 
 test('finished chapters are highlighted until their chapter quiz is done', () => {
   const d = data();
   const list = chapterQuizList(d);
-  assert.deepEqual(list.map((e) => e.chapter.id), ['SCM-H2', 'SCM-H3', 'FB-H1']);
-  const h2 = list.find((e) => e.chapter.id === 'SCM-H2')!;
+  assert.deepEqual(list.map((e) => e.chapter.id), ['FB-H1', 'IFHT-H2', 'IFHT-H3']);
+  const h2 = list.find((e) => e.chapter.id === 'IFHT-H2')!;
   assert.deepEqual([h2.finished, h2.highlighted, h2.pool], [true, true, 3]);
-  assert.equal(list.find((e) => e.chapter.id === 'SCM-H3')!.highlighted, false);
+  assert.equal(list.find((e) => e.chapter.id === 'IFHT-H3')!.highlighted, false);
 
   // No open session quiz: Home suggests the finished chapter.
   const home = homeQuizSuggestion(d);
   assert.equal(home?.kind, 'hoofdstuk');
-  assert.equal(home?.label, 'Mini-quiz · SCM H2 · 3 vragen');
+  assert.equal(home?.label, 'Mini-quiz · IFHT H2 · 3 vragen');
 
-  const pool = poolFor({ kind: 'hoofdstuk', id: 'SCM-H2' }, d);
-  const done = pool.map((i, n) => attempt(i, 'ffffffff-run', 'hoofdstuk:SCM-H2', true, '2026-10-25', n));
-  const after = chapterQuizList({ ...d, attempts: done }).find((e) => e.chapter.id === 'SCM-H2')!;
+  const pool = poolFor({ kind: 'hoofdstuk', id: 'IFHT-H2' }, d);
+  const done = pool.map((i, n) => attempt(i, 'ffffffff-run', 'hoofdstuk:IFHT-H2', true, '2026-10-25', n));
+  const after = chapterQuizList({ ...d, attempts: done }).find((e) => e.chapter.id === 'IFHT-H2')!;
   assert.deepEqual([after.finished, after.highlighted, after.runs], [true, false, 1]);
   assert.equal(homeQuizSuggestion({ ...d, attempts: done }), null);
 });
 
 test('course list: average and trend over the last five runs of any kind', () => {
   const d = data();
-  const h3 = d.items.filter((i) => i.chapter_id === 'SCM-H3');
+  const h3 = d.items.filter((i) => i.chapter_id === 'IFHT-H3');
   const attempts: QuizAttempt[] = [];
   // Six runs, oldest first, scoring 0/2, 1/2, 2/2, 2/2, 1/2, 2/2.
   const right = [0, 1, 2, 2, 1, 2];
   right.forEach((r, k) => {
     const runId = `${String(k).padStart(8, '0')}-run`;
-    h3.slice(0, 2).forEach((i, n) => attempts.push(attempt(i, runId, 'hoofdstuk:SCM-H3', n < r, `2026-10-${10 + k}`, n)));
+    h3.slice(0, 2).forEach((i, n) => attempts.push(attempt(i, runId, 'hoofdstuk:IFHT-H3', n < r, `2026-10-${10 + k}`, n)));
   });
-  const scm = courseQuizList({ ...d, attempts }).find((e) => e.course.id === 'SCM')!;
+  const scm = courseQuizList({ ...d, attempts }).find((e) => e.course.id === 'IFHT')!;
   assert.equal(scm.runs, 6);
   assert.deepEqual(scm.trend, [0.5, 1, 1, 0.5, 1]);
   assert.equal(scm.average, 0.8);
-  assert.equal(runScores({ ...d, attempts })[0].course_id, 'SCM');
+  assert.equal(runScores({ ...d, attempts })[0].course_id, 'IFHT');
   const fb = courseQuizList(d).find((e) => e.course.id === 'FB')!;
   assert.deepEqual([fb.runs, fb.average, fb.pool], [0, null, 4]);
 });
@@ -488,12 +493,12 @@ test('course list: average and trend over the last five runs of any kind', () =>
 
 test('a session quiz closed after two questions stays "Nieuwe quiz" on Home until done to the end', () => {
   const d = data();
-  const h3 = d.items.filter((i) => i.chapter_id === 'SCM-H3').slice(0, 5);
-  const quiz = sessionQuiz('q-half', h3.map((i) => i.id), { title: 'SCM H3 · dia 121–135' });
+  const h3 = d.items.filter((i) => i.chapter_id === 'IFHT-H3').slice(0, 5);
+  const quiz = sessionQuiz('q-half', h3.map((i) => i.id), { title: 'IFHT H3 · dia 121–135' });
   const half = h3.slice(0, 2).map((i, n) => attempt(i, 'aaaaaaaa-run', 'sessie:q-half', true, '2026-10-25', n));
   let list = sessionQuizList({ ...d, quizzes: [quiz], attempts: half });
   assert.deepEqual([list[0].done, list[0].questions, list[0].runs], [false, 5, 0]);
-  assert.equal(homeQuizSuggestion({ ...d, quizzes: [quiz], attempts: half })?.label, 'Nieuwe quiz · SCM H3 · dia 121–135');
+  assert.equal(homeQuizSuggestion({ ...d, quizzes: [quiz], attempts: half })?.label, 'Nieuwe quiz · IFHT H3 · dia 121–135');
 
   const full = h3.map((i, n) => attempt(i, 'bbbbbbbb-run', 'sessie:q-half', n !== 4, '2026-10-26', n));
   list = sessionQuizList({ ...d, quizzes: [quiz], attempts: [...half, ...full] });
@@ -503,7 +508,7 @@ test('a session quiz closed after two questions stays "Nieuwe quiz" on Home unti
 
 test('a session quiz counts its live questions, not the ids it was made with', () => {
   const d = data();
-  const h3 = d.items.filter((i) => i.chapter_id === 'SCM-H3').slice(0, 4);
+  const h3 = d.items.filter((i) => i.chapter_id === 'IFHT-H3').slice(0, 4);
   const retired = { ...h3[3], status: 'retired' as const };
   const items = d.items.map((i) => (i.id === retired.id ? retired : i));
   const quiz = sessionQuiz('q-4', h3.map((i) => i.id));
@@ -516,19 +521,19 @@ test('a session quiz counts its live questions, not the ids it was made with', (
 
 test('a chapter quiz stopped halfway keeps the "Hoofdstuk af" highlight', () => {
   const d = data();
-  const pool = poolFor({ kind: 'hoofdstuk', id: 'SCM-H2' }, d);
-  const half = pool.slice(0, 1).map((i, n) => attempt(i, 'dddddddd-run', 'hoofdstuk:SCM-H2', true, '2026-10-25', n));
-  const entry = chapterQuizList({ ...d, attempts: half }).find((e) => e.chapter.id === 'SCM-H2')!;
+  const pool = poolFor({ kind: 'hoofdstuk', id: 'IFHT-H2' }, d);
+  const half = pool.slice(0, 1).map((i, n) => attempt(i, 'dddddddd-run', 'hoofdstuk:IFHT-H2', true, '2026-10-25', n));
+  const entry = chapterQuizList({ ...d, attempts: half }).find((e) => e.chapter.id === 'IFHT-H2')!;
   assert.equal(entry.highlighted, true);
   assert.equal(homeQuizSuggestion({ ...d, attempts: half })?.kind, 'hoofdstuk');
 });
 
 test('examenklaar counts as finished too; bezig and niet_gezien do not', () => {
   const d = data();
-  const chapters = d.chapters.map((c) => (c.id === 'SCM-H3' ? { ...c, status: 'examenklaar' as const } : c.id === 'SCM-H2' ? { ...c, status: 'niet_gezien' as const } : c));
+  const chapters = d.chapters.map((c) => (c.id === 'IFHT-H3' ? { ...c, status: 'examenklaar' as const } : c.id === 'IFHT-H2' ? { ...c, status: 'niet_gezien' as const } : c));
   const list = chapterQuizList({ ...d, chapters });
-  assert.equal(list.find((e) => e.chapter.id === 'SCM-H3')!.highlighted, true);
-  assert.equal(list.find((e) => e.chapter.id === 'SCM-H2')!.finished, false);
+  assert.equal(list.find((e) => e.chapter.id === 'IFHT-H3')!.highlighted, true);
+  assert.equal(list.find((e) => e.chapter.id === 'IFHT-H2')!.finished, false);
 });
 
 test('Business English: no session quiz even if one slipped into the data, no chapter or course quiz', () => {
@@ -549,15 +554,15 @@ test('Business English: no session quiz even if one slipped into the data, no ch
 });
 
 test('a chapter with 9 cards and 27 items announces 9 questions, not 10', () => {
-  const cards = Array.from({ length: 9 }, (_, n) => card('SCM-H3', { id: `nine-${n}` }));
+  const cards = Array.from({ length: 9 }, (_, n) => card('IFHT-H3', { id: `nine-${n}` }));
   const items = cards.flatMap((c) => [item(c, 'mcq'), item(c, 'tf'), item(c, 'cloze')]);
   assert.equal(items.length, 27);
   assert.equal(runLength(items), 9);
-  const d = data({ cards, items, chapters: [chapter('SCM-H3', 3, 'af')] });
+  const d = data({ cards, items, chapters: [chapter('IFHT-H3', 3, 'af')] });
   const [entry] = chapterQuizList(d);
   assert.deepEqual([entry.pool, entry.questions], [27, 9]);
-  assert.equal(buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(2) })!.questions.length, 9);
-  assert.equal(homeQuizSuggestion(d)?.label, 'Mini-quiz · SCM H3 · 9 vragen');
+  assert.equal(buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(2) })!.questions.length, 9);
+  assert.equal(homeQuizSuggestion(d)?.label, 'Mini-quiz · IFHT H3 · 9 vragen');
 });
 
 /* ---- smarter quizzes (30/10): no repeats, all mistakes back, "Oefen je fouten" ---- */
@@ -569,19 +574,19 @@ function answerRun(run: { run_id: string; scope_key: string; questions: { item: 
 
 test('quizzing one chapter again and again: every card comes before any card repeats', () => {
   const d = data();
-  const cards = d.cards.filter((c) => c.chapter_id === 'SCM-H3').map((c) => c.id);
+  const cards = d.cards.filter((c) => c.chapter_id === 'IFHT-H3').map((c) => c.id);
   let attempts: QuizAttempt[] = [];
   const asked: string[][] = [];
   for (let r = 0; r < 3; r++) {
     const day = `2026-10-2${r}`;
-    const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, { ...d, attempts }, { rng: seeded(r + 1), runId: `run-${r}-0000-4000-8000-000000000000`, n: 4 })!;
+    const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, { ...d, attempts }, { rng: seeded(r + 1), runId: `run-${r}-0000-4000-8000-000000000000`, n: 4 })!;
     asked.push(run.questions.map((q) => q.item.card_id));
     attempts = [...attempts, ...answerRun(run, day)];
   }
   // 12 cards, 4 questions a run: three runs cover all twelve, none twice.
   assert.deepEqual([...asked.flat()].sort(), [...cards].sort());
   // The fourth run starts again with the cards asked longest ago (run 1).
-  const fourth = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, { ...d, attempts }, { rng: seeded(9), n: 4 })!;
+  const fourth = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, { ...d, attempts }, { rng: seeded(9), n: 4 })!;
   assert.deepEqual(fourth.questions.map((q) => q.item.card_id).sort(), [...asked[0]].sort());
   // And in another wording than the first time.
   const firstItems = new Set(attempts.filter((a) => a.run_id.startsWith('run-0')).map((a) => a.item_id));
@@ -590,19 +595,19 @@ test('quizzing one chapter again and again: every card comes before any card rep
 
 test('runsAgo: 0 for the latest run, then older; never asked is missing', () => {
   const d = data();
-  const [a, b, c] = d.items.filter((i) => i.chapter_id === 'SCM-H3');
-  const rows = [attempt(a, 'run-old', 'hoofdstuk:SCM-H3', true, '2026-10-20'), attempt(b, 'run-new', 'hoofdstuk:SCM-H3', true, '2026-10-22')];
+  const [a, b, c] = d.items.filter((i) => i.chapter_id === 'IFHT-H3');
+  const rows = [attempt(a, 'run-old', 'hoofdstuk:IFHT-H3', true, '2026-10-20'), attempt(b, 'run-new', 'hoofdstuk:IFHT-H3', true, '2026-10-22')];
   const ago = runsAgo(rows, new Set([a.id, b.id, c.id]));
   assert.deepEqual([ago.get(b.id), ago.get(a.id), ago.has(c.id)], [0, 1, false]);
 });
 
 test('five mistakes out of ten: all five come back in the next chapter quiz, in other words', () => {
   const d = data();
-  const first = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(3), runId: 'run-a-0000-4000-8000-000000000000' })!;
+  const first = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(3), runId: 'run-a-0000-4000-8000-000000000000' })!;
   const wrong = new Set(first.questions.slice(0, 5).map((q) => q.item.card_id));
   const attempts = answerRun(first, '2026-10-29', wrong);
   for (let seed = 1; seed <= 5; seed++) {
-    const next = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, { ...d, attempts }, { rng: seeded(seed), now: Date.parse('2026-10-30T18:00:00Z') })!;
+    const next = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, { ...d, attempts }, { rng: seeded(seed), now: Date.parse('2026-10-30T18:00:00Z') })!;
     const back = next.questions.filter((q) => wrong.has(q.item.card_id));
     assert.equal(back.length, 5, `seed ${seed}`);
     const missed = new Set(attempts.filter((a) => !a.correct).map((a) => a.item_id));
@@ -628,14 +633,14 @@ test('a session quiz done before never asks one card twice while it skips anothe
 
 test('Oefen je fouten: the cards that went wrong, in another wording', () => {
   const d = data();
-  const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(4), runId: 'run-f-0000-4000-8000-000000000000' })!;
+  const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(4), runId: 'run-f-0000-4000-8000-000000000000' })!;
   const wrong = new Set(run.questions.slice(2, 5).map((q) => q.item.card_id));
   d.attempts = answerRun(run, '2026-10-29', wrong);
   assert.deepEqual(new Set(wrongCardsOf(d.attempts, run.run_id)), wrong);
   const fix = buildMistakeRun(run.run_id, d, { rng: seeded(1), runId: 'fix-1-0000-4000-8000-000000000000' })!;
   assert.equal(fix.scope_key, `fouten:${run.run_id}`);
   assert.equal(fix.kind_label, 'Je fouten oefenen');
-  assert.equal(fix.title, 'SCM H3');
+  assert.equal(fix.title, 'IFHT H3');
   assert.deepEqual(new Set(fix.questions.map((q) => q.item.card_id)), wrong);
   const missed = new Set(d.attempts.filter((a) => !a.correct).map((a) => a.item_id));
   assert.ok(fix.questions.every((q) => !missed.has(q.item.id)), 'other words than the ones that went wrong');
@@ -644,7 +649,7 @@ test('Oefen je fouten: the cards that went wrong, in another wording', () => {
 
 test('Oefen je fouten: a wrong card comes back in another wording, three tries at most, until it is right', () => {
   const d = data();
-  const run = buildRun({ kind: 'hoofdstuk', id: 'SCM-H3' }, d, { rng: seeded(4), runId: 'run-g-0000-4000-8000-000000000000' })!;
+  const run = buildRun({ kind: 'hoofdstuk', id: 'IFHT-H3' }, d, { rng: seeded(4), runId: 'run-g-0000-4000-8000-000000000000' })!;
   const cardId = run.questions[0].item.card_id;
   d.attempts = answerRun(run, '2026-10-29', new Set([cardId]));
   const fix = buildMistakeRun(run.run_id, d, { rng: seeded(2) })!;
@@ -667,10 +672,103 @@ test('Oefen je fouten: a wrong card comes back in another wording, three tries a
 
 test('practising mistakes is not a score: no course average, and the scope is known', () => {
   const d = data();
-  const [i] = d.items.filter((x) => x.chapter_id === 'SCM-H3');
+  const [i] = d.items.filter((x) => x.chapter_id === 'IFHT-H3');
   const runId = '1b2c3d4e-0000-4000-8000-000000000000';
   d.attempts = [attempt(i, 'fix-run', `fouten:${runId}`, true, '2026-10-29')];
   assert.deepEqual(parseScope(`fouten:${runId}`), { kind: 'fouten', id: runId });
   assert.equal(runScores(d)[0].course_id, null);
-  assert.equal(courseQuizList(d).find((c) => c.course.id === 'SCM')!.runs, 0);
+  assert.equal(courseQuizList(d).find((c) => c.course.id === 'IFHT')!.runs, 0);
+});
+
+/* ---------------- the exam form per course (20/11) ---------------- */
+
+/** 30 BR cards over two chapters (mcq + tf + cloze each); 2 OR cards with only a cloze. */
+function lawWorld(): QuizData {
+  const cards: Card[] = [];
+  const items: QuizItem[] = [];
+  for (let i = 0; i < 30; i++) {
+    const c = card(i < 20 ? 'BR-D1' : 'BR-D2', { id: `br-${String(i).padStart(2, '0')}` });
+    cards.push(c);
+    items.push(item(c, 'mcq'), item(c, 'tf'), item(c, 'cloze'));
+  }
+  for (let i = 0; i < 2; i++) {
+    const c = card('OR-S1', { id: `or-${i}` });
+    cards.push(c);
+    items.push(item(c, 'cloze'));
+  }
+  return { courses: COURSES, chapters: [chapter('BR-D1', 1), chapter('BR-D2', 2), chapter('OR-S1', 1)], cards, items, quizzes: [], sessions: [], attempts: [] };
+}
+
+test('a multiple-choice course is never asked to fill in a word', () => {
+  const d = lawWorld();
+  for (let s = 1; s <= 10; s++) {
+    const run = buildRun({ kind: 'vak', id: 'BR' }, d, { rng: seeded(s) })!;
+    assert.equal(run.questions.length, 10);
+    assert.ok(run.questions.every((q) => q.format === 'mcq' || q.format === 'tf'), `seed ${s}`);
+  }
+  assert.ok(poolFor({ kind: 'hoofdstuk', id: 'BR-D1' }, d).every((i) => i.format !== 'cloze'));
+});
+
+test('a card without a question in an exam format is still asked', () => {
+  const d = lawWorld();
+  const pool = poolFor({ kind: 'vak', id: 'OR' }, d);
+  assert.equal(pool.length, 2, 'the only wording each card has');
+  assert.equal(examPool(d.items, true).filter((i) => i.course_id === 'OR').length, 2);
+});
+
+test('a mock exam asks the exam formats only, every chapter by its size', () => {
+  const d = lawWorld();
+  assert.deepEqual(EXAM_FORMS.BR.formats, ['mcq']);
+  for (let s = 1; s <= 10; s++) {
+    const run = buildRun({ kind: 'examen', id: 'BR' }, d, { rng: seeded(s) })!;
+    assert.equal(run.scope_key, 'examen:BR');
+    assert.equal(run.kind_label, 'Proefexamen');
+    assert.equal(run.questions.length, 20);
+    assert.ok(run.questions.every((q) => q.format === 'mcq'), `seed ${s}`);
+    assert.equal(new Set(run.questions.map((q) => q.item.card_id)).size, 20, 'one question per card');
+    const d1 = run.questions.filter((q) => q.item.chapter_id === 'BR-D1').length;
+    assert.ok(d1 >= 12 && d1 <= 14, `two thirds from the chapter with two thirds of the cards (${d1})`);
+  }
+  assert.deepEqual(parseScope('examen:BR'), { kind: 'examen', id: 'BR' });
+});
+
+test('sampleExam: a small chapter still gets a question, a tiny pool gives what it has', () => {
+  const d = lawWorld();
+  const pool = examPool(d.items.filter((i) => i.course_id === 'BR'), true);
+  const few = sampleExam(pool, new Set(), 5, seeded(1));
+  assert.equal(few.length, 5);
+  assert.ok(few.some((i) => i.chapter_id === 'BR-D2'));
+  assert.equal(sampleExam(pool.slice(0, 3), new Set(), 20, seeded(1)).length, 3);
+  assert.equal(sampleExam([], new Set(), 20, seeded(1)).length, 0);
+});
+
+test('chapter scores of a mock exam, and the list of mock exams', () => {
+  const d = lawWorld();
+  const run = buildRun({ kind: 'examen', id: 'BR' }, d, { rng: seeded(2) })!;
+  const grades = new Map<number, Grade>();
+  for (const q of run.questions) grades.set(q.n, gradeAnswer(q, { option: q.options!.findIndex((o) => (q.item.chapter_id === 'BR-D1' ? o.correct : !o.correct)) }));
+  const scores = chapterScores(run, grades, d.chapters);
+  assert.deepEqual(scores.map((c) => c.chapter_id), ['BR-D1', 'BR-D2']);
+  assert.equal(scores[0].correct, scores[0].total);
+  assert.equal(scores[1].correct, 0);
+  assert.equal(scores[0].total + scores[1].total, 20);
+
+  const list = examList(d);
+  assert.deepEqual(list.map((e) => e.course.id), ['BR'], 'OR has too few cards for a mock exam');
+  assert.deepEqual([list[0].questions, list[0].minutes, list[0].form.label], [20, 30, 'Alleen meerkeuze']);
+});
+
+test('a session quiz of a multiple-choice course swaps a fill-in for another question on the same card', () => {
+  const d = lawWorld();
+  const of = (cardId: string, format: string) => d.items.find((i) => i.card_id === cardId && i.format === format)!;
+  const fixed = [of('br-00', 'cloze'), of('br-01', 'mcq'), of('br-02', 'cloze'), of('br-02', 'mcq'), of('or-0', 'cloze')];
+  const quizzes: Quiz[] = [
+    { ...sessionQuiz('aaaaaaaa-0000-4000-8000-000000000001', fixed.slice(0, 4).map((i) => i.id)), course_id: 'BR', chapter_id: 'BR-D1' },
+    { ...sessionQuiz('aaaaaaaa-0000-4000-8000-000000000002', [fixed[4].id]), course_id: 'OR', chapter_id: 'OR-S1' },
+  ];
+  const pool = poolFor({ kind: 'sessie', id: quizzes[0].id }, { ...d, quizzes });
+  assert.deepEqual(pool.map((i) => [i.card_id, i.format]), [['br-00', 'mcq'], ['br-01', 'mcq'], ['br-02', 'tf'], ['br-02', 'mcq']]);
+  assert.equal(new Set(pool.map((i) => i.id)).size, 4, 'no question twice');
+  // A card with nothing but a fill-in keeps it.
+  assert.deepEqual(poolFor({ kind: 'sessie', id: quizzes[1].id }, { ...d, quizzes }).map((i) => i.format), ['cloze']);
 });

@@ -53,7 +53,7 @@ export const RECENT_RUNS = 2;
  * Scopes
  * ------------------------------------------------------------------ */
 
-export type QuizKind = 'sessie' | 'hoofdstuk' | 'vak' | 'fouten';
+export type QuizKind = 'sessie' | 'hoofdstuk' | 'vak' | 'fouten' | 'examen';
 
 /** What a run covers. `id` is a quiz id, a chapter id or a course id. */
 export interface QuizScope {
@@ -67,7 +67,7 @@ export function scopeKey(scope: QuizScope): string {
 }
 
 export function parseScope(value: string | null | undefined): QuizScope | null {
-  const m = /^(sessie|hoofdstuk|vak|fouten):(.+)$/.exec(value ?? '');
+  const m = /^(sessie|hoofdstuk|vak|fouten|examen):(.+)$/.exec(value ?? '');
   return m ? { kind: m[1] as QuizKind, id: m[2] } : null;
 }
 
@@ -77,6 +77,7 @@ export const KIND_LABELS: Record<QuizKind, string> = {
   hoofdstuk: 'Hoofdstukquiz',
   vak: 'Gemengde quiz',
   fouten: 'Je fouten oefenen',
+  examen: 'Proefexamen',
 };
 
 /** The tag on each question. */
@@ -103,10 +104,69 @@ export interface QuizData {
  * "fouten" run belongs to no course of its own: it practises another run.
  */
 export function scopeCourse(scope: QuizScope, data: Pick<QuizData, 'chapters' | 'quizzes'>): string | null {
-  if (scope.kind === 'vak') return scope.id;
+  if (scope.kind === 'vak' || scope.kind === 'examen') return scope.id;
   if (scope.kind === 'hoofdstuk') return data.chapters.find((c) => c.id === scope.id)?.course_id ?? null;
   if (scope.kind === 'fouten') return null;
   return data.quizzes.find((q) => q.id === scope.id)?.course_id ?? null;
+}
+
+/* ------------------------------------------------------------------ *
+ * The exam form per course
+ * ------------------------------------------------------------------ */
+
+/**
+ * How each course is examined (ECTS sheets 2026-27, in Notion; his wish 20/11:
+ * "train op de vorm van het examen"). A mock exam only asks the formats the real
+ * exam has. A chapter quiz and a course quiz drop what the exam never asks (no
+ * fill-in for a multiple-choice course) but keep juist/fout, so a card still
+ * has a second wording. `target` is the share he aims for in a
+ * mock exam (raised pass mark for BR and OR, possibly SCM and IFHT).
+ */
+export interface ExamForm {
+  /** Asked in a chapter quiz and a course quiz. */
+  practice: readonly QuizFormat[];
+  /** Asked in a mock exam: the real exam's own formats only. */
+  formats: readonly QuizFormat[];
+  /** 'Alleen meerkeuze', for the Quiz tab and the mock exam. */
+  label: string;
+  target: number;
+}
+
+export const EXAM_FORMS: Readonly<Record<string, ExamForm>> = {
+  BR: { practice: ['mcq', 'tf'], formats: ['mcq'], label: 'Alleen meerkeuze', target: 0.7 },
+  OR: { practice: ['mcq', 'tf'], formats: ['mcq'], label: 'Alleen meerkeuze', target: 0.7 },
+  FB: { practice: ['mcq', 'tf', 'numeric'], formats: ['mcq', 'numeric'], label: 'Alleen meerkeuze, veel rekenen', target: 0.6 },
+  SCM: { practice: ['mcq', 'tf', 'numeric'], formats: ['mcq', 'numeric'], label: 'Meerkeuze en vraagstukken', target: 0.7 },
+  IFHT: { practice: ['mcq', 'tf', 'cloze', 'numeric'], formats: ['mcq', 'cloze', 'numeric'], label: 'Meerkeuze, invullen en vraagstukken', target: 0.7 },
+};
+
+/** When a card has no question in an exam format, its closest other format is asked. */
+const FORMAT_FALLBACK: readonly QuizFormat[] = ['mcq', 'tf', 'numeric', 'cloze'];
+
+/**
+ * The items that fit the exam form of their course, in the pool's order. No
+ * card drops out: a card without a question in an exam format keeps the
+ * questions of its closest other format, so the material is still asked.
+ */
+export function examPool(pool: readonly QuizItem[], strict = false): QuizItem[] {
+  const byCard = new Map<string, QuizItem[]>();
+  for (const item of pool) {
+    let list = byCard.get(item.card_id);
+    if (!list) byCard.set(item.card_id, (list = []));
+    list.push(item);
+  }
+  const keep = new Set<string>();
+  for (const items of byCard.values()) {
+    const form = EXAM_FORMS[items[0].course_id];
+    const formats = strict ? form?.formats : form?.practice;
+    let fit = formats ? items.filter((i) => formats.includes(i.format)) : items;
+    if (fit.length === 0) {
+      const alt = FORMAT_FALLBACK.find((f) => items.some((i) => i.format === f));
+      fit = items.filter((i) => i.format === alt);
+    }
+    for (const i of fit) keep.add(i.id);
+  }
+  return pool.filter((i) => keep.has(i.id));
 }
 
 /* ------------------------------------------------------------------ *
@@ -134,10 +194,27 @@ export function poolFor(scope: QuizScope, data: Pick<QuizData, 'cards' | 'items'
     const quiz = data.quizzes.find((q) => q.id === scope.id);
     if (!quiz) return [];
     const byId = new Map(data.items.map((i) => [i.id, i]));
-    return quiz.item_ids.map((id) => byId.get(id)).filter((i) => usable(i, cards));
+    const fixed = quiz.item_ids.map((id) => byId.get(id)).filter((i) => usable(i, cards));
+    // A question in a format the exam never asks (fill-in for a multiple-choice
+    // course) gives its place to another question about the same card.
+    const formats = EXAM_FORMS[quiz.course_id]?.practice;
+    if (!formats) return fixed;
+    const taken = new Set(fixed.map((i) => i.id));
+    return fixed.map((item) => {
+      if (formats.includes(item.format)) return item;
+      const other = data.items
+        .filter((i) => i.card_id === item.card_id && formats.includes(i.format) && !taken.has(i.id) && usable(i, cards))
+        .sort((x, y) => formats.indexOf(x.format) - formats.indexOf(y.format) || x.id.localeCompare(y.id))[0];
+      if (!other) return item;
+      taken.add(other.id);
+      return other;
+    });
   }
-  return data.items.filter(
-    (i) => usable(i, cards) && (scope.kind === 'hoofdstuk' ? i.chapter_id === scope.id : i.course_id === scope.id),
+  return examPool(
+    data.items.filter(
+      (i) => usable(i, cards) && (scope.kind === 'hoofdstuk' ? i.chapter_id === scope.id : i.course_id === scope.id),
+    ),
+    scope.kind === 'examen',
   );
 }
 
@@ -326,6 +403,76 @@ export function sampleAdaptive(
 }
 
 /* ------------------------------------------------------------------ *
+ * The mock exam
+ * ------------------------------------------------------------------ */
+
+/** Questions in a mock exam, and the minutes it gives per question. */
+export const EXAM_LENGTH = 20;
+export const EXAM_MINUTES_PER_QUESTION = 1.5;
+
+/**
+ * A mock exam over one course: every chapter gets its share of the questions
+ * (by its number of cards, at least one), the freshest material first. No extra
+ * weight on weak spots: an exam measures, it does not train.
+ */
+export function sampleExam(
+  pool: readonly QuizItem[],
+  seen: Seen,
+  n: number = EXAM_LENGTH,
+  rng: () => number = Math.random,
+): QuizItem[] {
+  const byChapter = new Map<string, QuizItem[]>();
+  for (const item of pool) {
+    let list = byChapter.get(item.chapter_id);
+    if (!list) byChapter.set(item.chapter_id, (list = []));
+    list.push(item);
+  }
+  const sizes = [...byChapter].map(([id, items]) => ({ id, items, cards: new Set(items.map((i) => i.card_id)).size }));
+  const total = sizes.reduce((sum, c) => sum + c.cards, 0);
+  const want = Math.min(n, total);
+  if (want === 0) return [];
+  // Largest remainders, at least one per chapter while there is room.
+  const quota = sizes.map((c) => ({ ...c, exact: (want * c.cards) / total, take: 0 }));
+  for (const c of quota) c.take = Math.min(c.cards, Math.max(sizes.length <= want ? 1 : 0, Math.floor(c.exact)));
+  let left = want - quota.reduce((sum, c) => sum + c.take, 0);
+  const order = [...quota].sort((a, b) => b.exact - Math.floor(b.exact) - (a.exact - Math.floor(a.exact)));
+  for (let guard = 0; left !== 0 && guard < 10_000; guard++) {
+    const c = order[guard % order.length];
+    if (left > 0 && c.take < c.cards) {
+      c.take++;
+      left--;
+    } else if (left < 0 && c.take > 1) {
+      c.take--;
+      left++;
+    }
+  }
+  const picked = quota.flatMap((c) => sampleItems(c.items, seen, c.take, rng));
+  return shuffle(picked, rng).slice(0, want);
+}
+
+/** The score per chapter of a run, in chapter order: 'H3 · 4/5'. */
+export interface ChapterScore {
+  chapter_id: string;
+  code: string;
+  title: string;
+  correct: number;
+  total: number;
+}
+
+export function chapterScores(run: QuizRun, grades: ReadonlyMap<number, Grade>, chapters: readonly Chapter[]): ChapterScore[] {
+  const byId = new Map(chapters.map((c) => [c.id, c]));
+  const out = new Map<string, ChapterScore>();
+  for (const q of run.questions) {
+    const id = q.item.chapter_id;
+    let row = out.get(id);
+    if (!row) out.set(id, (row = { chapter_id: id, code: byId.get(id)?.code ?? id, title: byId.get(id)?.title ?? '', correct: 0, total: 0 }));
+    row.total++;
+    if (grades.get(q.n)?.correct) row.correct++;
+  }
+  return [...out.values()].sort((a, b) => (byId.get(a.chapter_id)?.sort ?? 99) - (byId.get(b.chapter_id)?.sort ?? 99) || a.chapter_id.localeCompare(b.chapter_id));
+}
+
+/* ------------------------------------------------------------------ *
  * A run
  * ------------------------------------------------------------------ */
 
@@ -416,7 +563,7 @@ export function buildRun(scope: QuizScope, data: QuizData, options: RunOptions =
       // question for a card only when the session has fewer cards than questions.
       const cards = cardMap(data.cards);
       const cardIds = new Set(fixed.map((i) => i.card_id));
-      const pool = data.items.filter((i) => cardIds.has(i.card_id) && usable(i, cards));
+      const pool = examPool(data.items.filter((i) => cardIds.has(i.card_id) && usable(i, cards)));
       const seen = runsAgo(data.attempts, new Set(pool.map((i) => i.id)));
       const target = Math.max(fixed.length, 1);
       const picked = sampleAdaptive(pool, seen, weak, target, rng);
@@ -444,7 +591,10 @@ export function buildRun(scope: QuizScope, data: QuizData, options: RunOptions =
   } else {
     const pool = poolFor(scope, data);
     const seen = runsAgo(data.attempts, new Set(pool.map((i) => i.id)));
-    items = sampleAdaptive(pool, seen, weak, options.n ?? RUN_LENGTH, rng);
+    items =
+      scope.kind === 'examen'
+        ? sampleExam(pool, seen, options.n ?? EXAM_LENGTH, rng)
+        : sampleAdaptive(pool, seen, weak, options.n ?? RUN_LENGTH, rng);
     if (scope.kind === 'hoofdstuk') {
       const chapter = data.chapters.find((c) => c.id === scope.id)!;
       chapterId = chapter.id;
@@ -502,6 +652,7 @@ export function buildMistakeRun(runId: string, data: QuizData, options: RunOptio
   const rng = options.rng ?? Math.random;
   const cards = cardMap(data.cards);
   const wrong = wrongCardsOf(data.attempts, runId).filter((id) => cards.get(id)?.status === 'live');
+  // Every format counts here: another wording teaches more than the exam form.
   const pool = data.items.filter((i) => wrong.includes(i.card_id) && usable(i, cards));
   if (pool.length === 0) return null;
   const seen = runsAgo(data.attempts, new Set(pool.map((i) => i.id)));
@@ -971,6 +1122,35 @@ export function courseQuizList(data: QuizData): CourseQuizEntry[] {
       };
     })
     .filter((e) => e.pool > 0);
+}
+
+export interface ExamEntry {
+  course: Course;
+  form: ExamForm;
+  /** Questions one mock exam asks. */
+  questions: number;
+  minutes: number;
+  /** The latest mock exam done to the end. */
+  last: RunScore | null;
+}
+
+/** "Proefexamen per vak": courses with an exam form and enough questions (at least 10 cards). */
+export function examList(data: QuizData): ExamEntry[] {
+  const scores = runScores(data);
+  return [...data.courses]
+    .filter((c) => hasQuizzes(c.id) && EXAM_FORMS[c.id])
+    .sort((a, b) => a.sort - b.sort)
+    .map((course) => {
+      const questions = runLength(poolFor({ kind: 'examen', id: course.id }, data), EXAM_LENGTH);
+      return {
+        course,
+        form: EXAM_FORMS[course.id],
+        questions,
+        minutes: Math.ceil(questions * EXAM_MINUTES_PER_QUESTION),
+        last: completeRuns(scores, `examen:${course.id}`, questions)[0] ?? scores.find((s) => s.scope === `examen:${course.id}`) ?? null,
+      };
+    })
+    .filter((e) => e.questions >= 10);
 }
 
 export type HomeQuizSuggestion =

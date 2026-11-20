@@ -19,8 +19,11 @@ import { sounds } from '../ui/sound.ts';
 import type { NumericAnswer } from '../lib/model.ts';
 import {
   buildMistakeRun,
+  EXAM_FORMS,
+  EXAM_MINUTES_PER_QUESTION,
   buildRun,
   cardsStillWrong,
+  chapterScores,
   retryQuestion,
   scopeCourse,
   type Grade,
@@ -37,6 +40,8 @@ export function quizRunMode(env: PageEnv): ModeHandle {
   const { ctx, d, params } = env;
   const kind = params[0] as QuizKind;
   const scope = { kind, id: params[1] ?? '' };
+  /** A mock exam: no hints, no feedback between questions, a clock, the verdict at the end. */
+  const exam = kind === 'examen';
 
   const title = h('span', { class: 'mode-title' });
   const counter = h('span', { class: 'mode-count' });
@@ -62,10 +67,12 @@ export function quizRunMode(env: PageEnv): ModeHandle {
   let busy = false;
   /** A typed fill-in answer graded wrong, not written yet (see settle). */
   let held: { q: QuizQuestion; given: QuizAnswer; grade: Grade; hintUsed: boolean } | null = null;
+  let deadline = 0;
+  let clock: ReturnType<typeof setInterval> | null = null;
 
   function start(): void {
     run =
-      kind === 'fouten' ? buildMistakeRun(scope.id, d.qdata) : ['sessie', 'hoofdstuk', 'vak'].includes(kind) ? buildRun(scope, d.qdata) : null;
+      kind === 'fouten' ? buildMistakeRun(scope.id, d.qdata) : ['sessie', 'hoofdstuk', 'vak', 'examen'].includes(kind) ? buildRun(scope, d.qdata) : null;
     index = 0;
     grades = new Map();
     finished = false;
@@ -76,19 +83,47 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     const label =
       run.scope.kind === 'fouten'
         ? `Je fouten · ${run.title}`
-        : run.scope.kind === 'vak'
+        : run.scope.kind === 'examen'
+          ? `${run.course_id} – Proefexamen`
+          : run.scope.kind === 'vak'
           ? `${run.course_id} – Gemengde quiz`
           : chapter
             ? `${run.course_id} – ${chapter.title}`
             : run.title;
     title.replaceChildren(h('i', { class: 'dot', style: `--cc:${course?.color ?? '#2F6BFF'}` }), h('span', { class: 'mode-title-text', text: label }));
+    stopClock();
+    if (exam) {
+      deadline = Date.now() + run.questions.length * EXAM_MINUTES_PER_QUESTION * 60_000;
+      clock = setInterval(tick, 1000);
+    }
     showQuestion();
+  }
+
+  function stopClock(): void {
+    if (clock) clearInterval(clock);
+    clock = null;
+  }
+
+  /** 'mm:ss' left on the exam clock. */
+  function timeLeft(): string {
+    const sec = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  }
+
+  function tick(): void {
+    if (!run || finished) return stopClock();
+    if (Date.now() >= deadline) {
+      stopClock();
+      void endRun();
+      return;
+    }
+    updateCounter();
   }
 
   function updateCounter(): void {
     if (!run) return;
     const total = run.questions.length;
-    counter.textContent = `${Math.min(index + 1, total)} / ${total}`;
+    counter.textContent = exam && !finished ? `${Math.min(index + 1, total)} / ${total} · ${timeLeft()}` : `${Math.min(index + 1, total)} / ${total}`;
     progress.style.width = `${Math.round(((index + (answered ? 1 : 0)) / total) * 100)}%`;
   }
 
@@ -102,7 +137,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     updateCounter();
 
     const hintBox = h('p', { class: 'qz-hint', hidden: true });
-    const hintLink = q.item.hint
+    const hintLink = q.item.hint && !exam
       ? h(
           'button',
           {
@@ -203,7 +238,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
       hintLink,
     );
     fill(body, card);
-    fill(foot, submit ?? h('p', { class: 'qz-foot-help', text: 'Tik op het antwoord dat jij denkt' }));
+    fill(foot, submit ?? h('p', { class: 'qz-foot-help', text: exam ? 'Zoals op het examen: je ziet pas op het einde wat juist was' : 'Tik op het antwoord dat jij denkt' }));
     body.scrollTop = 0;
     requestAnimationFrame(() => card.classList.remove('enter'));
   }
@@ -212,7 +247,16 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     if (!run || answered || busy) return;
     busy = true;
     answered = true;
+    let goOn = false;
     try {
+      if (exam) {
+        // Graded as written, no feedback now: straight to the next question.
+        const { grade } = await ctx.actions.settleQuiz(run, q, given, ctx.actions.gradeQuiz(q, given), false);
+        grades.set(q.n, grade);
+        buzz(8);
+        goOn = true;
+        return;
+      }
       // A typed fill-in the app calls wrong waits for his own verdict (settle()).
       const first = ctx.actions.gradeQuiz(q, given);
       if (ctx.actions.holdsForHim(q, given, first)) {
@@ -232,6 +276,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
       showFeedback(q, grade);
     } finally {
       busy = false;
+      if (goOn) void nextQuestion();
     }
   }
 
@@ -348,9 +393,16 @@ export function quizRunMode(env: PageEnv): ModeHandle {
       showQuestion();
       return;
     }
+    await endRun();
+  }
+
+  /** The last question was answered, or the exam clock ran out. */
+  async function endRun(): Promise<void> {
+    if (!run || finished) return;
     busy = true;
     try {
       finished = true;
+      stopClock();
       const result = await ctx.actions.finishQuiz(run, grades);
       showEnd(result);
     } finally {
@@ -368,7 +420,15 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     const practice = run.scope.kind === 'fouten';
     const left = practice ? cardsStillWrong(run, grades) : [];
     const practised = new Set(run.questions.map((q) => q.item.card_id)).size;
-    const message = practice
+    const form = exam ? EXAM_FORMS[run.course_id] : null;
+    const aim = form ? Math.ceil(form.target * result.total) : 0;
+    const passed = form ? result.correct >= aim : false;
+    const perChapter = exam ? chapterScores(run, grades, d.qdata.chapters) : [];
+    const message = form
+      ? passed
+        ? 'Op examenniveau 🎉'
+        : 'Nog niet op examenniveau'
+      : practice
       ? left.length === 0
         ? 'Alles juist! 🎉'
         : `Nog ${left.length === 1 ? '1 kaartje' : `${left.length} kaartjes`} om te oefenen`
@@ -377,7 +437,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
         : share >= 0.5
           ? 'Goed bezig'
           : 'Nog even oefenen';
-    if ((practice && left.length === 0) || (!practice && share >= 0.8)) sounds.fanfare();
+    if (form ? passed : (practice && left.length === 0) || (!practice && share >= 0.8)) sounds.fanfare();
     else sounds.done();
     // The cards that went wrong in this run, for "Oefen je fouten".
     const toFix = practice ? left.length : new Set(result.mistakes.map((m) => m.question.item.card_id)).size;
@@ -390,12 +450,31 @@ export function quizRunMode(env: PageEnv): ModeHandle {
         h('h1', { class: 'end-title', text: message }),
         h('p', {
           class: 'end-sub',
-          text: practice
+          text: form
+            ? `${form.label} · je mikt op ${aim}/${result.total}${grades.size < result.total ? ` · ${result.total - grades.size} niet beantwoord` : ''}`
+            : practice
             ? left.length === 0
               ? `Je kent ze nu allemaal. Morgen komen ze nog één keer terug, om het te laten plakken.`
               : 'Doe ze gerust nog een keer: elke keer in andere woorden.'
             : `${run.kind_label} · ${run.title}`,
         }),
+        perChapter.length > 1
+          ? h(
+              'section',
+              { class: 'card end-hard exam-chapters' },
+              h('h2', { class: 'card-title', text: 'Per hoofdstuk' }),
+              perChapter.map((c) => {
+                const part = c.total ? c.correct / c.total : 0;
+                return h(
+                  'div',
+                  { class: 'score-line' },
+                  h('span', { class: `score-dot ${part >= 0.8 ? 'good' : part >= 0.5 ? 'mid' : 'bad'}` }),
+                  h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: c.title ? `${c.code} · ${c.title}` : c.code })),
+                  h('b', { class: 'score-value', text: `${c.correct}/${c.total}` }),
+                );
+              }),
+            )
+          : null,
         result.mistakes.length > 0
           ? h(
               'section',
@@ -434,7 +513,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
         { class: 'end-actions' },
         practice
           ? null
-          : h('button', { class: 'btn btn-soft btn-big', type: 'button', on: { click: () => start() } }, h('span', { html: icon('sync', 18) }), run.scope.kind === 'sessie' ? 'Opnieuw' : 'Nog een quiz'),
+          : h('button', { class: 'btn btn-soft btn-big', type: 'button', on: { click: () => start() } }, h('span', { html: icon('sync', 18) }), exam ? 'Nieuw examen' : run.scope.kind === 'sessie' ? 'Opnieuw' : 'Nog een quiz'),
         h('button', { class: `btn ${toFix > 0 ? 'btn-soft' : 'btn-primary'} btn-big`, type: 'button', text: 'Klaar', on: { click: () => env.back('quiz') } }),
       ),
     );
@@ -458,7 +537,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
     counter.textContent = '';
     progress.style.width = '0';
     // Business English never has a quiz, whatever the address asked for (vak or hoofdstuk).
-    const be = (['sessie', 'hoofdstuk', 'vak'].includes(kind) ? scopeCourse(scope, d.qdata) : null) === 'BE';
+    const be = (['sessie', 'hoofdstuk', 'vak', 'examen'].includes(kind) ? scopeCourse(scope, d.qdata) : null) === 'BE';
     const fouten = kind === 'fouten';
     fill(
       body,
@@ -483,6 +562,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
   /** Closing halfway: what he answered wrong still comes back tomorrow. */
   function saveHalfway(): void {
     const r = run;
+    stopClock();
     if (r && !finished && grades.size > 0) {
       finished = true;
       // A fill-in answer still waiting for his verdict counts as the app graded it.
@@ -516,6 +596,7 @@ export function quizRunMode(env: PageEnv): ModeHandle {
   return {
     el: root,
     dispose: () => {
+      stopClock();
       document.removeEventListener('keydown', onKey);
       saveHalfway();
     },

@@ -265,7 +265,7 @@ export interface QuizAttempt {
   run_id: Uuid;
   item_id: Uuid;
   card_id: Uuid;
-  scope: string | null; // 'sessie:<quiz_id>' | 'hoofdstuk:<chapter_id>' | 'vak:<course_id>'
+  scope: string | null; // 'sessie:<quiz_id>' | 'hoofdstuk:<chapter_id>' | 'vak:<course_id>' | 'examen:<course_id>'
   correct: boolean;
   answer: unknown;
   hint_used: boolean;
